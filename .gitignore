@@ -17,6 +17,7 @@ venv/
 
 # Data (large files, don't commit)
 data/videos/
+data/subtitles/
 data/cache/
 data/processed/
 *.mp4

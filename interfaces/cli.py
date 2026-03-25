@@ -21,16 +21,18 @@ from services.index_service import IndexService
 from services.retrieval_service import RetrievalService
 
 
-def build_index(config: AppConfig, srt_dir: Path) -> None:
+def build_index(
+    config: AppConfig, srt_dir: Path, patterns: list[str] | None = None
+) -> None:
     """Build the FAISS index from SRT files."""
-    print(f"Building index from: {srt_dir}")
+    print(f"Building index from: {srt_dir} (patterns={patterns})")
     parser = SubtitleParser(to_traditional=config.to_traditional)
     builder = SegmentBuilder(config)
     embedder = LocalEmbedder(config.local_model_name)
     searcher = Searcher(config)
 
     index_svc = IndexService(config, parser, builder, embedder, searcher)
-    index_svc.build_all(srt_dir)
+    index_svc.build_all(srt_dir, patterns=patterns)
     print("Index built and saved.")
 
 
@@ -65,13 +67,15 @@ def main() -> None:
     parser.add_argument("--top-k", "-k", type=int, default=5, help="Number of results")
     parser.add_argument("--build", action="store_true", help="Build index from SRT files")
     parser.add_argument("--srt-dir", type=Path, default=Path("data/subtitles"), help="SRT directory")
+    parser.add_argument("--pattern", type=str, default=None, help="Glob pattern for subtitle files (e.g. '*.synced.srt')")
 
     args = parser.parse_args()
     config = AppConfig()
     config.ensure_dirs()
 
     if args.build:
-        build_index(config, args.srt_dir)
+        patterns = [args.pattern] if args.pattern else None
+        build_index(config, args.srt_dir, patterns=patterns)
     elif args.query:
         search_query(config, args.query, args.top_k)
     else:

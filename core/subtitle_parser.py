@@ -161,11 +161,20 @@ class SubtitleParser:
 
         return entries
 
-    def parse_dir(self, srt_dir: Path) -> list[SubtitleEntry]:
-        """Parse all subtitle files (.srt, .ass, .ssa) in a directory."""
+    def parse_dir(
+        self, srt_dir: Path, patterns: list[str] | None = None
+    ) -> list[SubtitleEntry]:
+        """Parse subtitle files in a directory.
+
+        Args:
+            srt_dir: Directory containing subtitle files.
+            patterns: Glob patterns to match (default: all .srt, .ass, .ssa).
+        """
+        if patterns is None:
+            patterns = ["*.srt", "*.ass", "*.ssa"]
         entries: list[SubtitleEntry] = []
-        for ext in ("*.srt", "*.ass", "*.ssa"):
-            for path in sorted(srt_dir.glob(ext)):
+        for pat in patterns:
+            for path in sorted(srt_dir.glob(pat)):
                 entries.extend(self.parse(path))
         return entries
 

@@ -26,10 +26,12 @@ class IndexService:
         self.embedder = embedder
         self.searcher = searcher
 
-    def build_all(self, srt_dir: Path) -> None:
+    def build_all(
+        self, srt_dir: Path, patterns: list[str] | None = None
+    ) -> None:
         """Run full pipeline: parse SRTs → build segments → embed → build index → save."""
         # 1. Parse
-        entries = self.parser.parse_dir(srt_dir)
+        entries = self.parser.parse_dir(srt_dir, patterns=patterns)
         if not entries:
             raise ValueError(f"No subtitle entries found in {srt_dir}")
 
