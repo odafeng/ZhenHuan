@@ -28,8 +28,28 @@ class IndexService:
 
     def build_all(self, srt_dir: Path) -> None:
         """Run full pipeline: parse SRTs → build segments → embed → build index → save."""
-        raise NotImplementedError
+        # 1. Parse
+        entries = self.parser.parse_dir(srt_dir)
+        if not entries:
+            raise ValueError(f"No subtitle entries found in {srt_dir}")
+
+        # 2. Build segments
+        segments = self.builder.build(entries)
+        if not segments:
+            raise ValueError("No segments produced after building")
+
+        # 3. Embed
+        texts = [s.embedding_text for s in segments]
+        embeddings = self.embedder.embed_texts(texts)
+
+        # 4. Build index
+        self.searcher.build_index(segments, embeddings)
+
+        # 5. Save
+        save_path = self.config.cache_dir / "index"
+        self.searcher.save(save_path)
 
     def load(self) -> None:
         """Load pre-built index from cache."""
-        raise NotImplementedError
+        load_path = self.config.cache_dir / "index"
+        self.searcher.load(load_path)

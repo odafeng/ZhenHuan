@@ -27,4 +27,21 @@ class RetrievalService:
 
     def search(self, request: SearchRequest) -> SearchResponse:
         """Full retrieval: embed → search → extract frames → return."""
-        raise NotImplementedError
+        # 1. Embed query
+        query_vec = self.embedder.embed_query(request.query)
+
+        # 2. Search
+        self.config.final_top_k = request.top_k
+        results = self.searcher.search(query_vec)
+
+        # 3. Extract frames (skip if video doesn't exist)
+        for r in results:
+            try:
+                frame_path = self.extractor.extract_frame(
+                    r.segment.video_path, r.segment.mid_time
+                )
+                r.frame_path = str(frame_path)
+            except Exception:
+                r.frame_path = None
+
+        return SearchResponse(query=request.query, results=results)
