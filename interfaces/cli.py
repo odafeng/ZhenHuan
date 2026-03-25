@@ -11,6 +11,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from config import AppConfig
 from core.embedder import LocalEmbedder
 from core.media_extractor import MediaExtractor
