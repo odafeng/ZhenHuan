@@ -61,7 +61,7 @@ class SegmentBuilder:
             window_texts = [entries[j].text for j in range(lo, hi + 1)]
             text_window = " ".join(window_texts)
 
-            mid_time = (window_start + window_end) / 2
+            mid_time = (center.start_time + center.end_time) / 2
 
             seg = Segment(
                 segment_id=f"{center.episode_id}_{tier}_{center.subtitle_id}",
@@ -74,6 +74,8 @@ class SegmentBuilder:
                 text_window=text_window,
                 window_tier=tier,
                 mid_time=mid_time,
+                current_start=center.start_time,
+                current_end=center.end_time,
                 embedding_text=text_window,
             )
             segments.append(seg)

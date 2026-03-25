@@ -28,8 +28,10 @@ class Segment:
     text_current: str
     text_window: str
     window_tier: str  # "single" | "local_window" | "expanded_window"
-    mid_time: float
+    mid_time: float  # midpoint of the current (center) entry
     embedding_text: str
+    current_start: float = 0.0  # start time of the center entry
+    current_end: float = 0.0  # end time of the center entry
 
 
 @dataclass
