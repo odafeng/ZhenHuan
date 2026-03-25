@@ -7,12 +7,14 @@ from schemas import SubtitleEntry
 
 class TestSegmentBuilder:
     def test_single_tier(self, app_config: AppConfig, sample_entries: list[SubtitleEntry]) -> None:
-        """Single tier: one segment per entry."""
+        """Single tier: one segment per entry (entries exceeding duration limit are excluded)."""
         app_config.window_tiers = ["single"]
         builder = SegmentBuilder(app_config)
         segments = builder.build(sample_entries)
         singles = [s for s in segments if s.window_tier == "single"]
-        assert len(singles) == len(sample_entries)
+        # Entry 4 (13s) exceeds 10s duration limit → excluded
+        valid = [e for e in sample_entries if (e.end_time - e.start_time) <= app_config.window_max_duration_sec]
+        assert len(singles) == len(valid)
         assert all(s.text_current == s.text_window for s in singles)
 
     def test_local_window_tier(self, app_config: AppConfig, sample_entries: list[SubtitleEntry]) -> None:
