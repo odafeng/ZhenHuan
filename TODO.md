@@ -1,19 +1,19 @@
 # ZhenHuan V1 — Development TODO
 
 ## Phase 0: Project scaffold
-- [ ] Create GitHub repo "ZhenHuan"
-- [ ] Push scaffold (folder structure + empty modules + config + schemas)
-- [ ] Setup pyproject.toml with dependencies
+- [x] Create GitHub repo "ZhenHuan"
+- [x] Push scaffold (folder structure + empty modules + config + schemas)
+- [x] Setup pyproject.toml with dependencies
 - [ ] Verify `pytest` runs (0 tests, no errors)
 
 ## Phase 1: Core layer — 按 pipeline 順序開發
-- [ ] **1.1 schemas.py** — 定義 SubtitleEntry, Segment, SearchResult, SearchRequest, SearchResponse
-- [ ] **1.2 config.py** — 定義 AppConfig dataclass
-- [ ] **1.3 SubtitleParser** — core/subtitle_parser.py + unit test
-  - [ ] Parse .srt → list[SubtitleEntry]
-  - [ ] Handle encoding (UTF-8 / BIG5)
-  - [ ] Handle malformed timestamps
-  - [ ] test_subtitle_parser.py 通過
+- [x] **1.1 schemas.py** — 定義 SubtitleEntry, Segment, SearchResult, SearchRequest, SearchResponse
+- [x] **1.2 config.py** — 定義 AppConfig dataclass
+- [x] **1.3 SubtitleParser** — core/subtitle_parser.py + unit test
+  - [x] Parse .srt → list[SubtitleEntry]
+  - [x] Handle encoding (UTF-8 / BIG5)
+  - [x] Handle malformed timestamps
+  - [x] test_subtitle_parser.py 通過
 - [ ] **1.4 SegmentBuilder** — core/segment_builder.py + unit test
   - [ ] Build 3 window tiers (single / local_window / expanded_window)
   - [ ] Duration constraint (≤10s) as first-class
