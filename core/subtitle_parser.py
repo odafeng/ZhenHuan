@@ -38,6 +38,18 @@ def _ass_ts_to_sec(h: str, m: str, s: str, cs: str) -> float:
 class SubtitleParser:
     """Parse SRT and ASS subtitle files into structured subtitle entries."""
 
+    def __init__(self, to_traditional: bool = False) -> None:
+        self._converter = None
+        if to_traditional:
+            import opencc
+            self._converter = opencc.OpenCC("s2t")
+
+    def _convert(self, text: str) -> str:
+        """Convert simplified → traditional if enabled."""
+        if self._converter is None:
+            return text
+        return self._converter.convert(text)
+
     def parse(self, path: Path) -> list[SubtitleEntry]:
         """Parse a subtitle file (auto-detect format by extension)."""
         suffix = path.suffix.lower()
@@ -87,6 +99,7 @@ class SubtitleParser:
                 continue
 
             subtitle_text = re.sub(r"<[^>]+>", "", subtitle_text)
+            subtitle_text = self._convert(subtitle_text)
 
             entries.append(
                 SubtitleEntry(
@@ -132,6 +145,8 @@ class SubtitleParser:
 
             if not clean:
                 continue
+
+            clean = self._convert(clean)
 
             entries.append(
                 SubtitleEntry(

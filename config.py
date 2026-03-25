@@ -15,6 +15,9 @@ class AppConfig:
     local_model_name: str = "shibing624/text2vec-bge-large-chinese"
     openai_model_name: str = "text-embedding-3-small"
 
+    # Parser
+    to_traditional: bool = True  # convert simplified → traditional Chinese
+
     # Window
     window_tiers: list[str] = field(
         default_factory=lambda: ["single", "local_window", "expanded_window"]

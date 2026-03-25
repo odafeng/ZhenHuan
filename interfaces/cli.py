@@ -24,7 +24,7 @@ from services.retrieval_service import RetrievalService
 def build_index(config: AppConfig, srt_dir: Path) -> None:
     """Build the FAISS index from SRT files."""
     print(f"Building index from: {srt_dir}")
-    parser = SubtitleParser()
+    parser = SubtitleParser(to_traditional=config.to_traditional)
     builder = SegmentBuilder(config)
     embedder = LocalEmbedder(config.local_model_name)
     searcher = Searcher(config)
