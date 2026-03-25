@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "zhenhuan"
+version = "0.1.0"
+description = "Decontextualized retrieval: match modern queries to drama subtitles for reaction images"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "faiss-cpu>=1.7",
+    "sentence-transformers>=2.2",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+gradio = ["gradio>=4.0"]
+api = ["fastapi>=0.100", "uvicorn>=0.20"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+]
+all = ["zhenhuan[openai,gradio,api,dev]"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
