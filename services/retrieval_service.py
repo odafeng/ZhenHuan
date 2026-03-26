@@ -1,5 +1,8 @@
-"""Query pipeline: embed query → search → extract frames → response.
-   Or: LLM direct select → extract frames → response.
+"""Query pipeline: embed query → search → return pre-extracted frames.
+   Or: LLM direct select → return pre-extracted frames.
+
+Frames are pre-extracted at build time at current_start (OCR-verified timestamp).
+MediaExtractor is only needed as fallback for segments without pre-extracted frames.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ class RetrievalService:
         config: AppConfig,
         embedder: Embedder,
         searcher: Searcher,
-        extractor: MediaExtractor,
+        extractor: MediaExtractor | None = None,
         reranker: LLMReranker | None = None,
     ) -> None:
         self.config = config
@@ -30,7 +33,7 @@ class RetrievalService:
         self.reranker = reranker
 
     def search(self, request: SearchRequest) -> SearchResponse:
-        """Full retrieval: embed → search → extract frames."""
+        """Full retrieval: embed → search → return results with pre-extracted frames."""
         if self.reranker:
             return self._search_llm(request)
         return self._search_embedding(request)
@@ -40,12 +43,11 @@ class RetrievalService:
         query_vec = self.embedder.embed_query(request.query)
         self.config.final_top_k = request.top_k
         results = self.searcher.search(query_vec)
-        self._extract_frames(results)
+        self._attach_frames(results)
         return SearchResponse(query=request.query, results=results)
 
     def _search_llm(self, request: SearchRequest) -> SearchResponse:
-        """LLM directly selects from all segments, with subtitle gating."""
-        # Request extra candidates so we can skip ones without subtitles
+        """LLM directly selects from all segments."""
         extra = request.top_k + 5
         candidates = self.reranker.select(request.query, top_k=extra)
 
@@ -53,44 +55,36 @@ class RetrievalService:
         for r in candidates:
             if len(results) >= request.top_k:
                 break
-            try:
-                cs = r.segment.current_start
-                ce = r.segment.current_end
-                if cs > 0 and ce > cs:
-                    frame_path = self.extractor.extract_frame_with_subtitle(
-                        r.segment.video_path, cs, ce
-                    )
-                else:
-                    frame_path = self.extractor.extract_frame(
-                        r.segment.video_path, r.segment.mid_time
-                    )
-
-                if frame_path and self.extractor._has_subtitle(frame_path):
-                    r.frame_path = str(frame_path)
-                    results.append(r)
-                else:
-                    # Skip: no subtitle visible
+            # Use pre-extracted frame
+            if r.segment.frame_path:
+                r.frame_path = r.segment.frame_path
+                results.append(r)
+            elif self.extractor:
+                try:
+                    frame = self._fallback_extract(r)
+                    if frame:
+                        r.frame_path = frame
+                        results.append(r)
+                except Exception:
                     continue
-            except Exception:
-                continue
+            else:
+                results.append(r)
 
         return SearchResponse(query=request.query, results=results)
 
-    def _extract_frames(self, results: list) -> None:
-        """Extract frames with subtitle gating."""
+    def _attach_frames(self, results: list) -> None:
+        """Attach pre-extracted frames, with optional fallback."""
         for r in results:
-            try:
-                cs = r.segment.current_start
-                ce = r.segment.current_end
-                if cs > 0 and ce > cs:
-                    # Try multiple frames, pick one with visible subtitle
-                    frame_path = self.extractor.extract_frame_with_subtitle(
-                        r.segment.video_path, cs, ce
-                    )
-                else:
-                    frame_path = self.extractor.extract_frame(
-                        r.segment.video_path, r.segment.mid_time
-                    )
-                r.frame_path = str(frame_path) if frame_path else None
-            except Exception:
-                r.frame_path = None
+            if r.segment.frame_path:
+                r.frame_path = r.segment.frame_path
+            elif self.extractor:
+                try:
+                    r.frame_path = self._fallback_extract(r)
+                except Exception:
+                    r.frame_path = None
+
+    def _fallback_extract(self, r) -> str | None:
+        """Fallback: extract frame at current_start (not mid_time)."""
+        t = r.segment.current_start if r.segment.current_start > 0 else r.segment.mid_time
+        frame_path = self.extractor.extract_frame(r.segment.video_path, t)
+        return str(frame_path) if frame_path else None

@@ -32,6 +32,7 @@ class Segment:
     embedding_text: str
     current_start: float = 0.0  # start time of the center entry
     current_end: float = 0.0  # end time of the center entry
+    frame_path: str | None = None  # pre-extracted frame (set at build time)
 
 
 @dataclass

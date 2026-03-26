@@ -28,24 +28,24 @@ from services.retrieval_service import RetrievalService
 def build_index(
     config: AppConfig, srt_dir: Path, patterns: list[str] | None = None
 ) -> None:
-    """Build the FAISS index from SRT files."""
+    """Build the FAISS index from SRT files and pre-extract frames."""
     print(f"Building index from: {srt_dir} (patterns={patterns})")
     parser = SubtitleParser(to_traditional=config.to_traditional)
     builder = SegmentBuilder(config)
     embedder = LocalEmbedder(config.local_model_name)
     searcher = Searcher(config)
+    extractor = MediaExtractor(output_dir=config.output_dir)
 
-    index_svc = IndexService(config, parser, builder, embedder, searcher)
+    index_svc = IndexService(config, parser, builder, embedder, searcher, extractor=extractor)
     index_svc.build_all(srt_dir, patterns=patterns)
-    print("Index built and saved.")
+    print("Index built and saved (with pre-extracted frames).")
 
 
 def search_query(config: AppConfig, query: str, top_k: int, use_llm: bool = False) -> None:
-    """Search the index and print results."""
+    """Search the index and print results (frames are pre-extracted in the index)."""
     embedder = LocalEmbedder(config.local_model_name)
     searcher = Searcher(config)
     searcher.load(config.cache_dir / "index")
-    extractor = MediaExtractor(output_dir=config.output_dir)
 
     reranker = None
     if use_llm:
@@ -54,7 +54,7 @@ def search_query(config: AppConfig, query: str, top_k: int, use_llm: bool = Fals
         reranker.load_segments(config.cache_dir)
         print("LLM mode: directly selecting from all segments")
 
-    retrieval_svc = RetrievalService(config, embedder, searcher, extractor, reranker=reranker)
+    retrieval_svc = RetrievalService(config, embedder, searcher, reranker=reranker)
     request = SearchRequest(query=query, top_k=top_k)
     response = retrieval_svc.search(request)
 
