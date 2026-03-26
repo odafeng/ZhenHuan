@@ -1,13 +1,14 @@
 """CLI interface for ZhenHuan retrieval system.
 
 Usage:
-    python -m interfaces.cli --query "你是在酸我嗎"
-    python -m interfaces.cli --query "臣妾做不到" --top-k 3
-    python -m interfaces.cli --query "發現他很大" --llm
-    python -m interfaces.cli --build --srt-dir data/subtitles
+    python -m interfaces.cli --query "今天加班到好晚"
+    python -m interfaces.cli --query "發現他很大" --top-k 3
+    python -m interfaces.cli --query "臣妾做不到" --embedding
+    python -m interfaces.cli --build --srt-dir data/subtitles/corrected
 """
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,18 +42,17 @@ def build_index(
     print("Index built and saved (with pre-extracted frames).")
 
 
-def search_query(config: AppConfig, query: str, top_k: int, use_llm: bool = False) -> None:
+def search_query(config: AppConfig, query: str, top_k: int, embedding_only: bool = False) -> None:
     """Search the index and print results (frames are pre-extracted in the index)."""
     embedder = LocalEmbedder(config.local_model_name)
     searcher = Searcher(config)
     searcher.load(config.cache_dir / "index")
 
     reranker = None
-    if use_llm:
+    if not embedding_only:
         from core.reranker import LLMReranker
         reranker = LLMReranker()
         reranker.load_segments(config.cache_dir)
-        print("LLM mode: directly selecting from all segments")
 
     retrieval_svc = RetrievalService(config, embedder, searcher, reranker=reranker)
     request = SearchRequest(query=query, top_k=top_k)
@@ -70,6 +70,7 @@ def search_query(config: AppConfig, query: str, top_k: int, use_llm: bool = Fals
         print(f"  Window:  {seg.text_window}")
         if r.frame_path:
             print(f"  Frame:   {r.frame_path}")
+            subprocess.run(["open", r.frame_path])
 
 
 def main() -> None:
@@ -79,7 +80,7 @@ def main() -> None:
     parser.add_argument("--build", action="store_true", help="Build index from SRT files")
     parser.add_argument("--srt-dir", type=Path, default=Path("data/subtitles"), help="SRT directory")
     parser.add_argument("--pattern", type=str, default=None, help="Glob pattern for subtitle files (e.g. '*.synced.srt')")
-    parser.add_argument("--llm", action="store_true", help="Enable LLM reranker (requires OPENAI_API_KEY)")
+    parser.add_argument("--embedding", action="store_true", help="Use embedding search only (no LLM, faster but less funny)")
 
     args = parser.parse_args()
     config = AppConfig()
@@ -89,7 +90,7 @@ def main() -> None:
         patterns = [args.pattern] if args.pattern else None
         build_index(config, args.srt_dir, patterns=patterns)
     elif args.query:
-        search_query(config, args.query, args.top_k, use_llm=args.llm)
+        search_query(config, args.query, args.top_k, embedding_only=args.embedding)
     else:
         parser.print_help()
         sys.exit(1)
