@@ -192,6 +192,10 @@ class LLMReranker:
                 for idx in indices:
                     if 0 <= idx < len(chunk_segments):
                         all_picks.append(chunk_segments[idx])
+            except anthropic.BadRequestError as e:
+                if "credit balance" in str(e):
+                    raise RuntimeError("Anthropic API 餘額不足，請至 https://console.anthropic.com/settings/billing 加值") from e
+                print(f"    Batch error: {e}")
             except Exception as e:
                 print(f"    Batch error: {e}")
 
