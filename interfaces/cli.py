@@ -55,6 +55,7 @@ def search_query(config: AppConfig, query: str, top_k: int, embedding_only: bool
         reranker.load_segments(config.cache_dir)
 
     retrieval_svc = RetrievalService(config, embedder, searcher, reranker=reranker)
+    print(f"\nSearching: 「{query}」 (top_k={top_k})...\n", flush=True)
     request = SearchRequest(query=query, top_k=top_k)
     response = retrieval_svc.search(request)
 

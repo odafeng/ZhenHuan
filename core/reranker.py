@@ -118,6 +118,8 @@ class LLMReranker:
 
         # Stage 1: Pick best from each batch (parallel, text-only)
         batch_winners: list[Segment] = []
+        done = 0
+        total_batches = sum(1 for segs in batches.values() if segs)
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = {
                 pool.submit(self._pick_from_batch, query, segs): name
@@ -125,13 +127,17 @@ class LLMReranker:
                 if segs
             }
             for future in futures:
+                done += 1
+                name = futures[future]
                 results = future.result()
                 batch_winners.extend(results)
+                print(f"  [{done}/{total_batches}] {name}: {len(results)} picks", flush=True)
 
         if not batch_winners:
             return []
 
-        print(f"  Batch winners: {len(batch_winners)}, final selection with vision...")
+        print(f"\n  Stage 1 done: {len(batch_winners)} candidates", flush=True)
+        print(f"  Stage 2: final selection with vision...", flush=True)
 
         # Stage 2: Final selection WITH vision (Claude sees the screenshots)
         if len(batch_winners) <= top_k:
