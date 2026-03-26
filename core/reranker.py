@@ -1,5 +1,6 @@
 """LLM-based selector: directly pick funny responses from all segments, no embedding needed."""
 
+import base64
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -31,12 +32,46 @@ PICK_PROMPT = """你是「甄嬛傳迷因產生器」。
 只回傳數字，不要解釋。"""
 
 
-FINAL_PROMPT = """你是「甄嬛傳迷因產生器」的最終評審。
+FINAL_VISION_PROMPT = """你是「甄嬛傳迷因產生器」的最終評審。
 
-從以下候選回應中，選出搭配使用者輸入最好笑的，排序輸出。
-要求多樣性——不同類型的笑點比重複同一個梗好。
+你會看到多組候選：每組包含一張甄嬛傳截圖和對應的台詞。
+使用者輸入了一句現代口語，你要選出「截圖＋台詞」搭配起來最好笑的回應。
 
-只回傳編號，用逗號分隔。不要解釋。"""
+評分標準：
+1. 台詞接話感：放在使用者那句話後面，像在回嘴/吐槽
+2. 語境反差：原意正經，當回覆後產生新的（黃色、諷刺、荒謬）意思
+3. 畫面加分：角色表情嚴肅/憤怒/無奈/陰險 搭配台詞產生的反差越大越好
+4. 多樣性：不同類型的笑點比重複同一個梗好
+
+只回傳編號，用逗號分隔，最好笑的排前面。不要解釋。"""
+
+
+# Patterns to filter out garbage segments
+_GARBAGE_PATTERN = re.compile(
+    r"www|com\.|GTN|普級|菸酒|編曲|作曲|主唱|姚貝娜|敬請斟酌"
+)
+
+
+def _is_garbage(seg: Segment) -> bool:
+    """Check if a segment is garbage (credits, OCR noise, too short)."""
+    text = seg.text_current.strip()
+    # Too short to be a meaningful reply
+    if len(text) <= 2:
+        return True
+    # Opening credits / theme song (first 55 seconds of each episode)
+    if seg.current_start < 55:
+        return True
+    # Ending credits (after 40 minutes)
+    if seg.current_start > 2400:
+        return True
+    # OCR noise: too many digits, special chars, or known garbage keywords
+    if _GARBAGE_PATTERN.search(text):
+        return True
+    # Mostly non-Chinese characters (OCR artifacts)
+    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    if chinese_chars < len(text) * 0.5 and len(text) > 3:
+        return True
+    return False
 
 
 class LLMReranker:
@@ -48,13 +83,20 @@ class LLMReranker:
         self._segments: list[Segment] | None = None
 
     def load_segments(self, cache_dir: Path) -> None:
-        """Load all segments from the index cache."""
+        """Load segments from cache, filtering out garbage."""
         import pickle
         seg_path = cache_dir / "index" / "segments.pkl"
         if not seg_path.exists():
             raise FileNotFoundError(f"Segments not found: {seg_path}")
         with open(seg_path, "rb") as f:
-            self._segments = pickle.load(f)
+            all_segs = pickle.load(f)
+
+        before = len([s for s in all_segs if s.window_tier == "single"])
+        self._segments = [s for s in all_segs if not (s.window_tier == "single" and _is_garbage(s))]
+        # Keep non-single tiers as-is (they're not used in select() anyway)
+        self._segments += [s for s in all_segs if s.window_tier != "single" and s not in self._segments]
+        after = len([s for s in self._segments if s.window_tier == "single"])
+        print(f"  Loaded segments: {after} usable singles (filtered {before - after} garbage)")
 
     def rerank(
         self, query: str, _candidates: list, top_k: int = 5
@@ -67,7 +109,6 @@ class LLMReranker:
         if not self._segments:
             raise RuntimeError("Call load_segments() first")
 
-        # Only use single-tier segments (one line each) to reduce volume
         singles = [s for s in self._segments if s.window_tier == "single"]
 
         # Group into batches of 10 episodes
@@ -75,7 +116,7 @@ class LLMReranker:
 
         print(f"  Searching {len(singles)} segments across {len(batches)} batches...")
 
-        # Pick best from each batch (parallel)
+        # Stage 1: Pick best from each batch (parallel, text-only)
         batch_winners: list[Segment] = []
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = {
@@ -90,15 +131,14 @@ class LLMReranker:
         if not batch_winners:
             return []
 
-        print(f"  Batch winners: {len(batch_winners)}, selecting top {top_k}...")
+        print(f"  Batch winners: {len(batch_winners)}, final selection with vision...")
 
-        # Final selection
+        # Stage 2: Final selection WITH vision (Claude sees the screenshots)
         if len(batch_winners) <= top_k:
             final = batch_winners
         else:
-            final = self._final_select(query, batch_winners, top_k)
+            final = self._final_select_with_vision(query, batch_winners, top_k)
 
-        # Convert to SearchResult-like dicts
         from schemas import SearchResult
         return [SearchResult(segment=s, score=1.0) for s in final]
 
@@ -116,13 +156,11 @@ class LLMReranker:
         return batches
 
     def _pick_from_batch(self, query: str, segments: list[Segment]) -> list[Segment]:
-        """LLM picks up to 3 best responses from a batch of segments."""
-        # Build numbered list
+        """Stage 1: LLM picks up to 3 best responses from a batch (text-only)."""
         lines = []
         for i, s in enumerate(segments, 1):
             lines.append(f"{i}. {s.text_current}")
 
-        # Split into chunks if too large (~4000 lines max per call)
         chunk_size = 3000
         all_picks: list[Segment] = []
 
@@ -153,9 +191,79 @@ class LLMReranker:
 
         return all_picks
 
-    def _final_select(
+    def _final_select_with_vision(
         self, query: str, winners: list[Segment], top_k: int
     ) -> list[Segment]:
+        """Stage 2: Final selection using vision — Claude sees screenshots + text."""
+        # Build multimodal content: for each candidate, include image + text
+        content_blocks = [
+            {"type": "text", "text": f"使用者說：「{query}」\n\n以下是候選回應，每個包含截圖和台詞：\n"},
+        ]
+
+        valid_winners = []
+        for i, s in enumerate(winners, 1):
+            frame_path = s.frame_path
+            if frame_path and Path(frame_path).exists():
+                try:
+                    img_data = base64.b64encode(Path(frame_path).read_bytes()).decode()
+                    content_blocks.append({
+                        "type": "text",
+                        "text": f"\n--- 候選 {len(valid_winners) + 1} ---",
+                    })
+                    content_blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": img_data,
+                        },
+                    })
+                    content_blocks.append({
+                        "type": "text",
+                        "text": f"台詞：「{s.text_current}」（{s.episode_id}）",
+                    })
+                    valid_winners.append(s)
+                except Exception:
+                    continue
+            else:
+                # No image, include as text-only candidate
+                content_blocks.append({
+                    "type": "text",
+                    "text": f"\n--- 候選 {len(valid_winners) + 1} ---\n（無截圖）台詞：「{s.text_current}」（{s.episode_id}）",
+                })
+                valid_winners.append(s)
+
+            # Limit to ~20 candidates to avoid token overflow
+            if len(valid_winners) >= 20:
+                break
+
+        content_blocks.append({
+            "type": "text",
+            "text": f"\n\n從以上候選中選最好笑的 {top_k} 個（考慮截圖畫面＋台詞＋使用者輸入的搭配效果）：",
+        })
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=100,
+                system=FINAL_VISION_PROMPT,
+                messages=[{"role": "user", "content": content_blocks}],
+                temperature=0.3,
+            )
+
+            raw = response.content[0].text.strip()
+            indices = [int(x.strip()) - 1 for x in raw.split(",")]
+            indices = [i for i in indices if 0 <= i < len(valid_winners)]
+            return [valid_winners[i] for i in indices[:top_k]]
+        except Exception as e:
+            print(f"  Vision final select error: {e}")
+            # Fallback to text-only
+            return self._final_select_text(query, winners, top_k)
+
+    def _final_select_text(
+        self, query: str, winners: list[Segment], top_k: int
+    ) -> list[Segment]:
+        """Fallback: text-only final selection."""
         lines = []
         for i, s in enumerate(winners, 1):
             lines.append(f"{i}. [{s.episode_id}] {s.text_current}")
@@ -169,7 +277,7 @@ class LLMReranker:
         response = self.client.messages.create(
             model=self.model,
             max_tokens=100,
-            system=FINAL_PROMPT,
+            system=FINAL_VISION_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
             temperature=0.3,
         )
