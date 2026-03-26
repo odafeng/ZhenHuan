@@ -27,7 +27,13 @@
 - [x] **4.2 test_index_persistence** — save/load roundtrip passed
 
 ## Phase 5: Integration — 用真實資料跑
-- [ ] 取得甄嬛傳 SRT 字幕檔 (至少 1 集)
-- [ ] 取得對應影片檔 (至少 1 集)
-- [ ] 跑完整 pipeline: build index → query → 看 frame
-- [ ] 人工檢查 top-5 結果是否「對味」
+- [x] OCR 76 集燒錄字幕 + 參考 SRT 修正（~91% 修正率）
+- [x] 76 集影片 pre-extract frames（60,872 唯一時間點）
+- [x] Build index（182,616 segments，全部有 frame_path）
+- [x] LLM 模式設為預設（Claude 找最好笑的回應）
+- [x] CLI query 自動開圖
+
+## Phase 6: Gradio Web UI
+- [ ] Gradio app：輸入框 + 搜尋結果（截圖 + 台詞 + 集數時間）
+- [ ] 一鍵複製/下載截圖
+- [ ] 部署到 Hugging Face Spaces 或本地
