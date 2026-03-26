@@ -77,9 +77,14 @@ def _is_garbage(seg: Segment) -> bool:
 class LLMReranker:
     """Directly select funny responses from all segments using LLM."""
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514") -> None:
+    def __init__(
+        self,
+        fast_model: str = "claude-haiku-4-5-20251001",
+        smart_model: str = "claude-sonnet-4-20250514",
+    ) -> None:
         self.client = anthropic.Anthropic()
-        self.model = model
+        self.fast_model = fast_model    # Stage 1: batch filtering (cheap, fast)
+        self.smart_model = smart_model  # Stage 2: final vision selection (quality)
         self._segments: list[Segment] | None = None
 
     def load_segments(self, cache_dir: Path) -> None:
@@ -179,7 +184,7 @@ class LLMReranker:
 
             try:
                 response = self.client.messages.create(
-                    model=self.model,
+                    model=self.fast_model,
                     max_tokens=50,
                     system=PICK_PROMPT,
                     messages=[{"role": "user", "content": user_msg}],
@@ -254,7 +259,7 @@ class LLMReranker:
 
         try:
             response = self.client.messages.create(
-                model=self.model,
+                model=self.smart_model,
                 max_tokens=100,
                 system=FINAL_VISION_PROMPT,
                 messages=[{"role": "user", "content": content_blocks}],
@@ -285,7 +290,7 @@ class LLMReranker:
         )
 
         response = self.client.messages.create(
-            model=self.model,
+            model=self.smart_model,
             max_tokens=100,
             system=FINAL_VISION_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
