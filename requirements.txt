@@ -1,0 +1,10 @@
+numpy>=1.24
+faiss-cpu>=1.7
+sentence-transformers>=2.2
+torch>=2.0
+opencc-python-reimplemented>=0.1.7
+anthropic>=0.40
+gradio>=6.0
+python-dotenv>=1.0
+Pillow>=10.0
+huggingface_hub>=0.20
