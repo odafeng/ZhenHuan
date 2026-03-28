@@ -105,9 +105,6 @@ def _resolve_frame(frame_path: str | None) -> str | None:
 
 
 def search(query: str, top_k: int = 5, mode: str = "Embedding（快速）"):
-    if not _ready:
-        raise gr.Error(f"系統尚未就緒：{_status}")
-
     if not query.strip():
         return []
 
@@ -130,43 +127,53 @@ def search(query: str, top_k: int = 5, mode: str = "Embedding（快速）"):
     return results
 
 
-def get_status():
-    return f"系統狀態：{_status}"
+def check_ready():
+    """Return visibility updates: hide loading, show main UI when ready."""
+    if _ready:
+        return gr.update(visible=False), gr.update(visible=True)
+    return gr.update(visible=True, value=f"## 系統啟動中...\n\n{_status}\n\n首次啟動需下載資料，請稍候 1-2 分鐘。"), gr.update(visible=False)
 
 
 # --- Gradio UI ---
 with gr.Blocks(title="甄嬛傳迷因產生器") as app:
-    gr.Markdown("# 甄嬛傳迷因產生器\n輸入一句話，找最好笑的甄嬛截圖回應")
+    # Loading screen
+    loading_box = gr.Markdown("## 系統啟動中...\n\n請稍候...", visible=True)
 
-    status_text = gr.Markdown(f"⏳ 系統狀態：{_status}")
+    # Main UI (hidden until ready)
+    with gr.Column(visible=False) as main_ui:
+        gr.Markdown("# 甄嬛傳迷因產生器\n輸入一句話，找最好笑的甄嬛截圖回應")
 
-    with gr.Row():
-        query_input = gr.Textbox(
-            label="你想說什麼？",
-            placeholder="例：今天加班到好晚、發現他很大、你是在酸我嗎",
-            scale=4,
+        with gr.Row():
+            query_input = gr.Textbox(
+                label="你想說什麼？",
+                placeholder="例：今天加班到好晚、發現他很大、你是在酸我嗎",
+                scale=4,
+            )
+            top_k_input = gr.Slider(
+                minimum=1, maximum=10, value=5, step=1,
+                label="結果數量", scale=1,
+            )
+            mode_input = gr.Radio(
+                choices=["Embedding（快速）", "LLM（較慢但好笑）"],
+                value="Embedding（快速）",
+                label="搜尋模式", scale=1,
+            )
+
+        search_btn = gr.Button("找迷因！", variant="primary")
+
+        gallery = gr.Gallery(
+            label="搜尋結果",
+            columns=3,
+            height="auto",
+            object_fit="contain",
         )
-        top_k_input = gr.Slider(
-            minimum=1, maximum=10, value=5, step=1,
-            label="結果數量", scale=1,
-        )
-        mode_input = gr.Radio(
-            choices=["Embedding（快速）", "LLM（較慢但好笑）"],
-            value="Embedding（快速）",
-            label="搜尋模式", scale=1,
-        )
 
-    search_btn = gr.Button("找迷因！", variant="primary")
+        search_btn.click(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
+        query_input.submit(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
 
-    gallery = gr.Gallery(
-        label="搜尋結果",
-        columns=3,
-        height="auto",
-        object_fit="contain",
-    )
-
-    search_btn.click(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
-    query_input.submit(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
+    # Poll readiness: a hidden timer that checks every 2 seconds
+    timer = gr.Timer(2)
+    timer.tick(fn=check_ready, outputs=[loading_box, main_ui])
 
 
 if __name__ == "__main__":
