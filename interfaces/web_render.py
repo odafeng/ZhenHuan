@@ -56,8 +56,7 @@ def _download_and_init():
         _status = "解壓截圖中..."
         with tarfile.open(path, "r:gz") as tar:
             tar.extractall(FRAMES_DIR)
-            combined.unlink(missing_ok=True)
-            print("Frames ready", flush=True)
+        print("Frames ready", flush=True)
 
     # 3. Init services
     _status = "載入模型中..."
