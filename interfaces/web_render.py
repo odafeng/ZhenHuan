@@ -184,9 +184,6 @@ with gr.Blocks(title="甄嬛傳迷因產生器") as app:
     search_btn.click(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
     query_input.submit(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
 
-    # Poll status every 3 seconds until ready
-    app.load(fn=get_status, outputs=status_text, every=3)
-
 
 if __name__ == "__main__":
     app.launch(server_name="0.0.0.0", server_port=7860, theme=gr.themes.Soft())
