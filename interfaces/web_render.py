@@ -30,41 +30,56 @@ def _download_and_init():
     """Download data + init LLM reranker (no embedding model needed)."""
     global _ready, _status, _reranker, _segments
 
-    from huggingface_hub import hf_hub_download
+    try:
+        from huggingface_hub import hf_hub_download
 
-    # 1. Download index (only need segments.pkl for LLM mode)
-    if not (INDEX_DIR / "segments.pkl").exists():
-        _status = "下載索引中..."
-        print("Downloading index...", flush=True)
-        INDEX_DIR.mkdir(parents=True, exist_ok=True)
-        path = hf_hub_download(HF_REPO, "index.tar.gz", repo_type="dataset")
-        with tarfile.open(path, "r:gz") as tar:
-            tar.extractall(INDEX_DIR)
-        print("Index ready", flush=True)
+        # 1. Download index (only need segments.pkl for LLM mode)
+        seg_path = INDEX_DIR / "segments.pkl"
+        print(f"Checking index at {seg_path}, exists={seg_path.exists()}", flush=True)
+        if not seg_path.exists():
+            _status = "下載索引中..."
+            print("Downloading index...", flush=True)
+            INDEX_DIR.mkdir(parents=True, exist_ok=True)
+            path = hf_hub_download(HF_REPO, "index.tar.gz", repo_type="dataset")
+            with tarfile.open(path, "r:gz") as tar:
+                tar.extractall(INDEX_DIR)
+            print("Index ready", flush=True)
+        else:
+            print("Index already on disk, skipping download", flush=True)
 
-    # 2. Download frames
-    if not FRAMES_DIR.exists() or len(list(FRAMES_DIR.glob("*.jpg"))) < 1000:
-        _status = "下載截圖中..."
-        print("Downloading frames_small.tar.gz...", flush=True)
-        FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-        path = hf_hub_download(HF_REPO, "frames_small.tar.gz", repo_type="dataset")
-        print("  Download complete, extracting...", flush=True)
-        _status = "解壓截圖中..."
-        with tarfile.open(path, "r:gz") as tar:
-            tar.extractall(FRAMES_DIR)
-        print("Frames ready", flush=True)
+        # 2. Download frames
+        frame_count = len(list(FRAMES_DIR.glob("*.jpg"))) if FRAMES_DIR.exists() else 0
+        print(f"Checking frames at {FRAMES_DIR}, count={frame_count}", flush=True)
+        if frame_count < 1000:
+            _status = "下載截圖中..."
+            print("Downloading frames_small.tar.gz...", flush=True)
+            FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+            path = hf_hub_download(HF_REPO, "frames_small.tar.gz", repo_type="dataset")
+            print("  Download complete, extracting...", flush=True)
+            _status = "解壓截圖中..."
+            with tarfile.open(path, "r:gz") as tar:
+                tar.extractall(FRAMES_DIR)
+            print("Frames ready", flush=True)
+        else:
+            print(f"Frames already on disk ({frame_count}), skipping download", flush=True)
 
-    # 3. Load LLM reranker (no embedding model, just segments + API client)
-    _status = "載入中..."
-    print("Loading LLM reranker...", flush=True)
+        # 3. Load LLM reranker
+        _status = "載入中..."
+        print("Loading LLM reranker...", flush=True)
 
-    from core.reranker import LLMReranker
-    _reranker = LLMReranker()
-    _reranker.load_segments(INDEX_DIR.parent)
+        from core.reranker import LLMReranker
+        _reranker = LLMReranker()
+        _reranker.load_segments(INDEX_DIR.parent)
 
-    _ready = True
-    _status = "就緒！"
-    print("Service ready!", flush=True)
+        _ready = True
+        _status = "就緒！"
+        print("Service ready!", flush=True)
+
+    except Exception as e:
+        _status = f"啟動失敗：{e}"
+        import traceback
+        traceback.print_exc()
+        print(f"INIT FAILED: {e}", flush=True)
 
 
 # Start background init
