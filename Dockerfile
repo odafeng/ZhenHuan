@@ -16,7 +16,6 @@ COPY . .
 # First run: copy index + frames to persistent disk
 # Subsequent runs: read from persistent disk
 ENV GRADIO_SERVER_NAME=0.0.0.0
-ENV GRADIO_SERVER_PORT=7860
-EXPOSE 7860
+EXPOSE 10000
 
 CMD ["python", "-m", "interfaces.web_render"]
