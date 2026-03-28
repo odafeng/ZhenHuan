@@ -98,8 +98,6 @@ class LLMReranker:
 
         before = len([s for s in all_segs if s.window_tier == "single"])
         self._segments = [s for s in all_segs if not (s.window_tier == "single" and _is_garbage(s))]
-        # Keep non-single tiers as-is (they're not used in select() anyway)
-        self._segments += [s for s in all_segs if s.window_tier != "single" and s not in self._segments]
         after = len([s for s in self._segments if s.window_tier == "single"])
         print(f"  Loaded segments: {after} usable singles (filtered {before - after} garbage)")
 
