@@ -1,7 +1,7 @@
 """Gradio web UI for Render deployment.
 
-Starts Gradio immediately (so Render sees the port), then downloads
-data from HF Dataset to persistent disk in background on first run.
+LLM-only mode (no embedding model needed) — saves ~1.3GB RAM.
+Downloads index + frames from HF Dataset to persistent disk on first run.
 """
 
 import os
@@ -22,21 +22,17 @@ HF_REPO = "odafeng/zhenhuan-data"
 # --- Global state ---
 _ready = False
 _status = "啟動中..."
-_svc_llm = None
-_svc_emb = None
+_reranker = None
+_segments = None
 
 
 def _download_and_init():
-    """Download data + init services in background thread."""
-    global _ready, _status, _svc_llm, _svc_emb
+    """Download data + init LLM reranker (no embedding model needed)."""
+    global _ready, _status, _reranker, _segments
 
     from huggingface_hub import hf_hub_download
-    from config import AppConfig
-    from core.embedder import LocalEmbedder
-    from core.searcher import Searcher
-    from services.retrieval_service import RetrievalService
 
-    # 1. Download index
+    # 1. Download index (only need segments.pkl for LLM mode)
     if not (INDEX_DIR / "segments.pkl").exists():
         _status = "下載索引中..."
         print("Downloading index...", flush=True)
@@ -46,9 +42,9 @@ def _download_and_init():
             tar.extractall(INDEX_DIR)
         print("Index ready", flush=True)
 
-    # 2. Download frames (compressed 480px version, ~736MB)
+    # 2. Download frames
     if not FRAMES_DIR.exists() or len(list(FRAMES_DIR.glob("*.jpg"))) < 1000:
-        _status = "下載截圖中（約 1-2 分鐘）..."
+        _status = "下載截圖中..."
         print("Downloading frames_small.tar.gz...", flush=True)
         FRAMES_DIR.mkdir(parents=True, exist_ok=True)
         path = hf_hub_download(HF_REPO, "frames_small.tar.gz", repo_type="dataset")
@@ -58,29 +54,13 @@ def _download_and_init():
             tar.extractall(FRAMES_DIR)
         print("Frames ready", flush=True)
 
-    # 3. Init services
-    _status = "載入模型中..."
-    print("Loading models...", flush=True)
+    # 3. Load LLM reranker (no embedding model, just segments + API client)
+    _status = "載入中..."
+    print("Loading LLM reranker...", flush=True)
 
-    config = AppConfig()
-    config.cache_dir = INDEX_DIR.parent
-    config.output_dir = FRAMES_DIR
-    config.ensure_dirs()
-
-    embedder = LocalEmbedder(config.local_model_name)
-    searcher = Searcher(config)
-    searcher.load(config.cache_dir / "index")
-
-    _svc_emb = RetrievalService(config, embedder, searcher)
-
-    try:
-        from core.reranker import LLMReranker
-        reranker = LLMReranker()
-        reranker.load_segments(config.cache_dir)
-        _svc_llm = RetrievalService(config, embedder, searcher, reranker=reranker)
-        print("LLM mode ready", flush=True)
-    except Exception as e:
-        print(f"LLM mode unavailable: {e}", flush=True)
+    from core.reranker import LLMReranker
+    _reranker = LLMReranker()
+    _reranker.load_segments(INDEX_DIR.parent)
 
     _ready = True
     _status = "就緒！"
@@ -103,22 +83,16 @@ def _resolve_frame(frame_path: str | None) -> str | None:
     return None
 
 
-def search(query: str, top_k: int = 5, mode: str = "Embedding（快速）"):
+def search(query: str, top_k: int = 5):
     if not query.strip():
         return []
 
-    from schemas import SearchRequest
-
-    use_llm = "LLM" in mode and _svc_llm is not None
-    svc = _svc_llm if use_llm else _svc_emb
-
-    request = SearchRequest(query=query.strip(), top_k=int(top_k))
-    response = svc.search(request)
+    results_raw = _reranker.select(query.strip(), top_k=int(top_k))
 
     results = []
-    for r in response.results:
+    for r in results_raw:
         seg = r.segment
-        frame = _resolve_frame(r.frame_path) or _resolve_frame(seg.frame_path)
+        frame = _resolve_frame(seg.frame_path)
         if frame:
             caption = f"「{seg.text_current}」\n{seg.episode_id} | {seg.current_start:.0f}s"
             results.append((frame, caption))
@@ -127,18 +101,15 @@ def search(query: str, top_k: int = 5, mode: str = "Embedding（快速）"):
 
 
 def check_ready():
-    """Return visibility updates: hide loading, show main UI when ready."""
     if _ready:
         return gr.update(visible=False), gr.update(visible=True)
-    return gr.update(visible=True, value=f"## 系統啟動中...\n\n{_status}\n\n首次啟動需下載資料，請稍候 1-2 分鐘。"), gr.update(visible=False)
+    return gr.update(visible=True, value=f"## 系統啟動中...\n\n{_status}\n\n首次啟動需下載資料，請稍候。"), gr.update(visible=False)
 
 
 # --- Gradio UI ---
 with gr.Blocks(title="甄嬛傳迷因產生器") as app:
-    # Loading screen
     loading_box = gr.Markdown("## 系統啟動中...\n\n請稍候...", visible=True)
 
-    # Main UI (hidden until ready)
     with gr.Column(visible=False) as main_ui:
         gr.Markdown("# 甄嬛傳迷因產生器\n輸入一句話，找最好笑的甄嬛截圖回應")
 
@@ -152,11 +123,6 @@ with gr.Blocks(title="甄嬛傳迷因產生器") as app:
                 minimum=1, maximum=10, value=5, step=1,
                 label="結果數量", scale=1,
             )
-            mode_input = gr.Radio(
-                choices=["Embedding（快速）", "LLM（較慢但好笑）"],
-                value="Embedding（快速）",
-                label="搜尋模式", scale=1,
-            )
 
         search_btn = gr.Button("找迷因！", variant="primary")
 
@@ -167,10 +133,9 @@ with gr.Blocks(title="甄嬛傳迷因產生器") as app:
             object_fit="contain",
         )
 
-        search_btn.click(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
-        query_input.submit(fn=search, inputs=[query_input, top_k_input, mode_input], outputs=gallery)
+        search_btn.click(fn=search, inputs=[query_input, top_k_input], outputs=gallery)
+        query_input.submit(fn=search, inputs=[query_input, top_k_input], outputs=gallery)
 
-    # Poll readiness: a hidden timer that checks every 2 seconds
     timer = gr.Timer(2)
     timer.tick(fn=check_ready, outputs=[loading_box, main_ui])
 
