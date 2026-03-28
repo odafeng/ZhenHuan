@@ -48,17 +48,28 @@ def _download_and_init():
             print("Index already on disk, skipping download", flush=True)
 
         # 2. Download frames
+        # Check if frames need upgrade: version file tracks quality
+        version_file = FRAMES_DIR / ".version"
+        current_version = version_file.read_text().strip() if version_file.exists() else ""
+        target_version = "640px_q55_v2"
         frame_count = len(list(FRAMES_DIR.glob("*.jpg"))) if FRAMES_DIR.exists() else 0
-        print(f"Checking frames at {FRAMES_DIR}, count={frame_count}", flush=True)
-        if frame_count < 1000:
+        needs_download = frame_count < 1000 or current_version != target_version
+        print(f"Checking frames at {FRAMES_DIR}, count={frame_count}, version={current_version or 'none'}", flush=True)
+        if needs_download:
             _status = "下載截圖中..."
             print("Downloading frames_small.tar.gz...", flush=True)
             FRAMES_DIR.mkdir(parents=True, exist_ok=True)
             path = hf_hub_download(HF_REPO, "frames_small.tar.gz", repo_type="dataset")
             print("  Download complete, extracting...", flush=True)
             _status = "解壓截圖中..."
+            # Clear old frames first
+            import shutil
+            if FRAMES_DIR.exists():
+                shutil.rmtree(FRAMES_DIR)
+            FRAMES_DIR.mkdir(parents=True, exist_ok=True)
             with tarfile.open(path, "r:gz") as tar:
                 tar.extractall(FRAMES_DIR)
+            version_file.write_text(target_version)
             print("Frames ready", flush=True)
         else:
             print(f"Frames already on disk ({frame_count}), skipping download", flush=True)
