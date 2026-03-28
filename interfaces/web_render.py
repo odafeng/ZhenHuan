@@ -51,27 +51,11 @@ def _download_and_init():
         _status = "下載截圖中（首次啟動，約需 5 分鐘）..."
         print("Downloading frames...", flush=True)
         FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-        parts = []
-        for suffix in ["aa", "ab", "ac", "ad"]:
-            fname = f"frames.tar.gz.part_{suffix}"
-            try:
-                p = hf_hub_download(HF_REPO, fname, repo_type="dataset")
-                parts.append(p)
-                print(f"  Downloaded {fname}", flush=True)
-            except Exception as e:
-                print(f"  {fname} not found: {e}", flush=True)
-                break
-
-        if parts:
-            _status = "解壓截圖中..."
-            combined = PERSIST_DIR / "frames.tar.gz"
-            with open(combined, "wb") as out:
-                for p in parts:
-                    with open(p, "rb") as inp:
-                        while chunk := inp.read(8192 * 1024):
-                            out.write(chunk)
-            with tarfile.open(combined, "r:gz") as tar:
-                tar.extractall(FRAMES_DIR)
+        path = hf_hub_download(HF_REPO, "frames.tar.gz", repo_type="dataset")
+        print("  Download complete, extracting...", flush=True)
+        _status = "解壓截圖中..."
+        with tarfile.open(path, "r:gz") as tar:
+            tar.extractall(FRAMES_DIR)
             combined.unlink(missing_ok=True)
             print("Frames ready", flush=True)
 
