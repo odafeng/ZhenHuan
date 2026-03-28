@@ -46,12 +46,12 @@ def _download_and_init():
             tar.extractall(INDEX_DIR)
         print("Index ready", flush=True)
 
-    # 2. Download frames
+    # 2. Download frames (compressed 480px version, ~736MB)
     if not FRAMES_DIR.exists() or len(list(FRAMES_DIR.glob("*.jpg"))) < 1000:
-        _status = "下載截圖中（首次啟動，約需 5 分鐘）..."
-        print("Downloading frames...", flush=True)
+        _status = "下載截圖中（約 1-2 分鐘）..."
+        print("Downloading frames_small.tar.gz...", flush=True)
         FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-        path = hf_hub_download(HF_REPO, "frames.tar.gz", repo_type="dataset")
+        path = hf_hub_download(HF_REPO, "frames_small.tar.gz", repo_type="dataset")
         print("  Download complete, extracting...", flush=True)
         _status = "解壓截圖中..."
         with tarfile.open(path, "r:gz") as tar:
