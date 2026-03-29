@@ -84,7 +84,7 @@ MOBILE_CSS = """
 }
 """
 
-with gr.Blocks(title="甄嬛傳迷因產生器", css=MOBILE_CSS) as app:
+with gr.Blocks(title="甄嬛傳迷因產生器") as app:
     gr.Markdown("# 甄嬛傳迷因產生器\n輸入一句話，找最好笑的甄嬛截圖回應")
 
     with gr.Row():
@@ -112,4 +112,4 @@ with gr.Blocks(title="甄嬛傳迷因產生器", css=MOBILE_CSS) as app:
 
 
 if __name__ == "__main__":
-    app.launch(theme=gr.themes.Soft())
+    app.launch(theme=gr.themes.Soft(), css=MOBILE_CSS)

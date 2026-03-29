@@ -155,7 +155,7 @@ MOBILE_CSS = """
 }
 """
 
-with gr.Blocks(title="甄嬛傳迷因產生器", css=MOBILE_CSS) as app:
+with gr.Blocks(title="甄嬛傳迷因產生器") as app:
     loading_box = gr.Markdown("## 系統啟動中...\n\n請稍候...", visible=True)
 
     with gr.Column(visible=False) as main_ui:
@@ -191,4 +191,4 @@ with gr.Blocks(title="甄嬛傳迷因產生器", css=MOBILE_CSS) as app:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     app.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft(),
-               allowed_paths=[str(FRAMES_DIR)])
+               allowed_paths=[str(FRAMES_DIR)], css=MOBILE_CSS)
