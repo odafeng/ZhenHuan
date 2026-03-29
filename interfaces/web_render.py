@@ -47,6 +47,21 @@ def _download_and_init():
         else:
             print("Index already on disk, skipping download", flush=True)
 
+        # 1b. Download embeddings (for fast cosine-sim pre-filter)
+        emb_path = INDEX_DIR / "embeddings.npy"
+        if not emb_path.exists():
+            _status = "下載嵌入向量中..."
+            print("Downloading embeddings.npy...", flush=True)
+            try:
+                path = hf_hub_download(HF_REPO, "embeddings.npy", repo_type="dataset")
+                import shutil as _shutil
+                _shutil.copy(path, emb_path)
+                print("Embeddings ready", flush=True)
+            except Exception as e:
+                print(f"Embeddings not available ({e}), will use Haiku fallback", flush=True)
+        else:
+            print("Embeddings already on disk", flush=True)
+
         # 2. Download frames
         # Check if frames need upgrade: version file tracks quality
         version_file = FRAMES_DIR / ".version"

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import anthropic
+import numpy as np
 
 from schemas import Segment
 
@@ -81,14 +82,19 @@ class LLMReranker:
         self,
         fast_model: str = "claude-haiku-4-5-20251001",
         smart_model: str = "claude-sonnet-4-20250514",
+        openai_embed_model: str = "text-embedding-3-small",
     ) -> None:
         self.client = anthropic.Anthropic()
         self.fast_model = fast_model    # Stage 1: batch filtering (cheap, fast)
         self.smart_model = smart_model  # Stage 2: final vision selection (quality)
+        self.openai_embed_model = openai_embed_model
         self._segments: list[Segment] | None = None
+        self._singles: list[Segment] | None = None
+        self._embeddings: np.ndarray | None = None  # (N, dim) pre-computed embeddings
+        self._openai_client = None
 
     def load_segments(self, cache_dir: Path) -> None:
-        """Load segments from cache, filtering out garbage."""
+        """Load segments from cache, filtering out garbage. Also load embeddings if available."""
         import pickle
         seg_path = cache_dir / "index" / "segments.pkl"
         if not seg_path.exists():
@@ -98,8 +104,20 @@ class LLMReranker:
 
         before = len([s for s in all_segs if s.window_tier == "single"])
         self._segments = [s for s in all_segs if not (s.window_tier == "single" and _is_garbage(s))]
-        after = len([s for s in self._segments if s.window_tier == "single"])
+        self._singles = [s for s in self._segments if s.window_tier == "single"]
+        after = len(self._singles)
         print(f"  Loaded segments: {after} usable singles (filtered {before - after} garbage)")
+
+        # Try to load pre-computed embeddings
+        emb_path = cache_dir / "index" / "embeddings.npy"
+        if emb_path.exists():
+            self._embeddings = np.load(emb_path)
+            print(f"  Loaded embeddings: {self._embeddings.shape}")
+            if self._embeddings.shape[0] != len(self._singles):
+                print(f"  WARNING: embeddings count ({self._embeddings.shape[0]}) != singles count ({len(self._singles)}), disabling embedding mode")
+                self._embeddings = None
+        else:
+            print(f"  No embeddings.npy found, will use Haiku batch scan (slower & more expensive)")
 
     def rerank(
         self, query: str, _candidates: list, top_k: int = 5
@@ -107,11 +125,44 @@ class LLMReranker:
         """Not used in direct mode. See select() instead."""
         return self.select(query, top_k)
 
+    def _embed_query(self, query: str) -> np.ndarray:
+        """Embed a query using OpenAI API."""
+        if self._openai_client is None:
+            from openai import OpenAI
+            self._openai_client = OpenAI()
+        response = self._openai_client.embeddings.create(
+            input=[query], model=self.openai_embed_model
+        )
+        return np.array(response.data[0].embedding, dtype=np.float32)
+
     def select(self, query: str, top_k: int = 5) -> list[dict]:
-        """Directly select funny responses from all segments."""
+        """Select funny responses. Uses embedding pre-filter if available, else Haiku batch scan."""
         if not self._segments:
             raise RuntimeError("Call load_segments() first")
 
+        # --- Fast path: embedding pre-filter → Sonnet vision ---
+        if self._embeddings is not None and self._singles:
+            print(f"  Embedding mode: cosine sim over {len(self._singles)} segments...")
+            query_vec = self._embed_query(query)
+            # Normalize
+            query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-9)
+            emb_norms = self._embeddings / (np.linalg.norm(self._embeddings, axis=1, keepdims=True) + 1e-9)
+            scores = emb_norms @ query_norm
+            # Top 20 candidates for Sonnet vision
+            n_candidates = min(20, len(scores))
+            top_indices = np.argsort(scores)[-n_candidates:][::-1]
+            candidates = [self._singles[i] for i in top_indices]
+            print(f"  Top {n_candidates} candidates selected, sending to Sonnet vision...")
+
+            if len(candidates) <= top_k:
+                final = candidates
+            else:
+                final = self._final_select_with_vision(query, candidates, top_k)
+
+            from schemas import SearchResult
+            return [SearchResult(segment=s, score=1.0) for s in final]
+
+        # --- Slow path: Haiku batch scan (fallback) ---
         singles = [s for s in self._segments if s.window_tier == "single"]
 
         # Group into batches of 10 episodes
