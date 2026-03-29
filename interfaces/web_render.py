@@ -133,7 +133,14 @@ def check_ready():
 
 
 # --- Gradio UI ---
-with gr.Blocks(title="甄嬛傳迷因產生器") as app:
+MOBILE_CSS = """
+@media (max-width: 768px) {
+    .row { flex-direction: column !important; }
+    .gallery .grid-wrap { grid-template-columns: repeat(2, 1fr) !important; }
+}
+"""
+
+with gr.Blocks(title="甄嬛傳迷因產生器", css=MOBILE_CSS) as app:
     loading_box = gr.Markdown("## 系統啟動中...\n\n請稍候...", visible=True)
 
     with gr.Column(visible=False) as main_ui:

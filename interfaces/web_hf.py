@@ -77,7 +77,14 @@ def search(query: str, top_k: int = 5):
 
 
 # --- Gradio UI ---
-with gr.Blocks(title="甄嬛傳迷因產生器") as app:
+MOBILE_CSS = """
+@media (max-width: 768px) {
+    .row { flex-direction: column !important; }
+    .gallery .grid-wrap { grid-template-columns: repeat(2, 1fr) !important; }
+}
+"""
+
+with gr.Blocks(title="甄嬛傳迷因產生器", css=MOBILE_CSS) as app:
     gr.Markdown("# 甄嬛傳迷因產生器\n輸入一句話，找最好笑的甄嬛截圖回應")
 
     with gr.Row():
