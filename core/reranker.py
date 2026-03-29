@@ -166,10 +166,17 @@ class LLMReranker:
         if not batch_winners:
             return []
 
-        print(f"  Done: {len(batch_winners)} total picks → returning top {top_k}", flush=True)
+        print(f"  Stage 1 done: {len(batch_winners)} picks", flush=True)
+
+        # Stage 2: Haiku vision — pick best with screenshot context
+        if len(batch_winners) <= top_k:
+            final = batch_winners
+        else:
+            print(f"  Stage 2: Haiku vision rerank...", flush=True)
+            final = self._final_select_with_vision(query, batch_winners, top_k)
 
         from schemas import SearchResult
-        return [SearchResult(segment=s, score=1.0) for s in batch_winners[:top_k]]
+        return [SearchResult(segment=s, score=1.0) for s in final]
 
     def _group_by_episode_batch(
         self, segments: list[Segment], batch_size: int = 10
@@ -277,7 +284,7 @@ class LLMReranker:
 
         try:
             response = self.client.messages.create(
-                model=self.smart_model,
+                model=self.fast_model,
                 max_tokens=100,
                 system=FINAL_VISION_PROMPT,
                 messages=[{"role": "user", "content": content_blocks}],
@@ -290,8 +297,8 @@ class LLMReranker:
             return [valid_winners[i] for i in indices[:top_k]]
         except Exception as e:
             print(f"  Vision final select error: {e}")
-            # Fallback to text-only
-            return self._final_select_text(query, winners, top_k)
+            # Fallback: return first top_k without vision
+            return winners[:top_k]
 
     def _final_select_text(
         self, query: str, winners: list[Segment], top_k: int
