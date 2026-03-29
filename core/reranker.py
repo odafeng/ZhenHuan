@@ -136,45 +136,21 @@ class LLMReranker:
         return np.array(response.data[0].embedding, dtype=np.float32)
 
     def select(self, query: str, top_k: int = 5) -> list[dict]:
-        """Select funny responses. Uses embedding pre-filter if available, else Haiku batch scan."""
+        """Select funny responses using Haiku batch scan (no Sonnet vision)."""
         if not self._segments:
             raise RuntimeError("Call load_segments() first")
 
-        # --- Fast path: embedding pre-filter → Sonnet vision ---
-        if self._embeddings is not None and self._singles:
-            print(f"  Embedding mode: cosine sim over {len(self._singles)} segments...")
-            query_vec = self._embed_query(query)
-            # Normalize
-            query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-9)
-            emb_norms = self._embeddings / (np.linalg.norm(self._embeddings, axis=1, keepdims=True) + 1e-9)
-            scores = emb_norms @ query_norm
-            # Top 20 candidates for Sonnet vision
-            n_candidates = min(20, len(scores))
-            top_indices = np.argsort(scores)[-n_candidates:][::-1]
-            candidates = [self._singles[i] for i in top_indices]
-            print(f"  Top {n_candidates} candidates selected, sending to Sonnet vision...")
+        singles = self._singles or [s for s in self._segments if s.window_tier == "single"]
 
-            if len(candidates) <= top_k:
-                final = candidates
-            else:
-                final = self._final_select_with_vision(query, candidates, top_k)
+        # Fewer, larger batches → fewer API calls
+        batches = self._group_by_episode_batch(singles, batch_size=25)
 
-            from schemas import SearchResult
-            return [SearchResult(segment=s, score=1.0) for s in final]
+        print(f"  Haiku scan: {len(singles)} segments across {len(batches)} batches...")
 
-        # --- Slow path: Haiku batch scan (fallback) ---
-        singles = [s for s in self._segments if s.window_tier == "single"]
-
-        # Group into batches of 10 episodes
-        batches = self._group_by_episode_batch(singles, batch_size=10)
-
-        print(f"  Searching {len(singles)} segments across {len(batches)} batches...")
-
-        # Stage 1: Pick best from each batch (parallel, text-only)
         batch_winners: list[Segment] = []
         done = 0
         total_batches = sum(1 for segs in batches.values() if segs)
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
                 pool.submit(self._pick_from_batch, query, segs): name
                 for name, segs in batches.items()
@@ -190,17 +166,10 @@ class LLMReranker:
         if not batch_winners:
             return []
 
-        print(f"\n  Stage 1 done: {len(batch_winners)} candidates", flush=True)
-        print(f"  Stage 2: final selection with vision...", flush=True)
-
-        # Stage 2: Final selection WITH vision (Claude sees the screenshots)
-        if len(batch_winners) <= top_k:
-            final = batch_winners
-        else:
-            final = self._final_select_with_vision(query, batch_winners, top_k)
+        print(f"  Done: {len(batch_winners)} total picks → returning top {top_k}", flush=True)
 
         from schemas import SearchResult
-        return [SearchResult(segment=s, score=1.0) for s in final]
+        return [SearchResult(segment=s, score=1.0) for s in batch_winners[:top_k]]
 
     def _group_by_episode_batch(
         self, segments: list[Segment], batch_size: int = 10
