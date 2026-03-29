@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import anthropic
-import numpy as np
 
 from schemas import Segment
 
@@ -82,19 +81,16 @@ class LLMReranker:
         self,
         fast_model: str = "claude-haiku-4-5-20251001",
         smart_model: str = "claude-sonnet-4-20250514",
-        openai_embed_model: str = "text-embedding-3-small",
     ) -> None:
         self.client = anthropic.Anthropic()
-        self.fast_model = fast_model    # Stage 1: batch filtering (cheap, fast)
-        self.smart_model = smart_model  # Stage 2: final vision selection (quality)
-        self.openai_embed_model = openai_embed_model
+        self.fast_model = fast_model    # Text scan + vision rerank
+        self.smart_model = smart_model  # Reserved for future use
         self._segments: list[Segment] | None = None
         self._singles: list[Segment] | None = None
-        self._embeddings: np.ndarray | None = None  # (N, dim) pre-computed embeddings
-        self._openai_client = None
+        self._scan_pool: list[Segment] | None = None  # Pre-filtered humor candidates
 
     def load_segments(self, cache_dir: Path) -> None:
-        """Load segments from cache, filtering out garbage. Also load embeddings if available."""
+        """Load segments from cache. Prefers humor_pool.pkl (small, pre-filtered) over full scan."""
         import pickle
         seg_path = cache_dir / "index" / "segments.pkl"
         if not seg_path.exists():
@@ -108,16 +104,15 @@ class LLMReranker:
         after = len(self._singles)
         print(f"  Loaded segments: {after} usable singles (filtered {before - after} garbage)")
 
-        # Try to load pre-computed embeddings
-        emb_path = cache_dir / "index" / "embeddings.npy"
-        if emb_path.exists():
-            self._embeddings = np.load(emb_path)
-            print(f"  Loaded embeddings: {self._embeddings.shape}")
-            if self._embeddings.shape[0] != len(self._singles):
-                print(f"  WARNING: embeddings count ({self._embeddings.shape[0]}) != singles count ({len(self._singles)}), disabling embedding mode")
-                self._embeddings = None
+        # Try to load pre-filtered humor pool (much smaller → cheaper runtime)
+        pool_path = cache_dir / "index" / "humor_pool.pkl"
+        if pool_path.exists():
+            with open(pool_path, "rb") as f:
+                self._scan_pool = pickle.load(f)
+            print(f"  Loaded humor pool: {len(self._scan_pool)} candidates (fast mode)")
         else:
-            print(f"  No embeddings.npy found, will use Haiku batch scan (slower & more expensive)")
+            self._scan_pool = None
+            print(f"  No humor_pool.pkl found, will full-scan {after} segments (slow & expensive)")
 
     def rerank(
         self, query: str, _candidates: list, top_k: int = 5
@@ -125,27 +120,19 @@ class LLMReranker:
         """Not used in direct mode. See select() instead."""
         return self.select(query, top_k)
 
-    def _embed_query(self, query: str) -> np.ndarray:
-        """Embed a query using OpenAI API."""
-        if self._openai_client is None:
-            from openai import OpenAI
-            self._openai_client = OpenAI()
-        response = self._openai_client.embeddings.create(
-            input=[query], model=self.openai_embed_model
-        )
-        return np.array(response.data[0].embedding, dtype=np.float32)
-
     def select(self, query: str, top_k: int = 5) -> list[dict]:
-        """Select funny responses using Haiku batch scan (no Sonnet vision)."""
+        """Select funny responses using Haiku batch scan."""
         if not self._segments:
             raise RuntimeError("Call load_segments() first")
 
-        singles = self._singles or [s for s in self._segments if s.window_tier == "single"]
+        # Use pre-filtered humor pool if available, else full scan
+        singles = self._scan_pool or self._singles or [s for s in self._segments if s.window_tier == "single"]
+        pool_mode = "humor pool" if self._scan_pool else "full scan"
 
         # Fewer, larger batches → fewer API calls
         batches = self._group_by_episode_batch(singles, batch_size=25)
 
-        print(f"  Haiku scan: {len(singles)} segments across {len(batches)} batches...")
+        print(f"  Haiku {pool_mode}: {len(singles)} segments across {len(batches)} batches...")
 
         batch_winners: list[Segment] = []
         done = 0
