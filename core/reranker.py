@@ -52,6 +52,21 @@ _GARBAGE_PATTERN = re.compile(
 )
 
 
+def _parse_indices(raw: str, n: int) -> list[int]:
+    """Extract 1-based indices from an LLM reply, return valid 0-based indices.
+
+    Tolerant of full-width commas, trailing punctuation, and stray text
+    (e.g. "我選 12、45", "3,7,", "編號: 2 5 9"). "0" means no pick.
+    """
+    nums = re.findall(r"\d+", raw)
+    out = []
+    for tok in nums:
+        idx = int(tok) - 1
+        if 0 <= idx < n and idx not in out:
+            out.append(idx)
+    return out
+
+
 def _is_garbage(seg: Segment) -> bool:
     """Check if a segment is garbage (credits, OCR noise, too short)."""
     text = seg.text_current.strip()
@@ -129,8 +144,10 @@ class LLMReranker:
         singles = self._scan_pool or self._singles or [s for s in self._segments if s.window_tier == "single"]
         pool_mode = "humor pool" if self._scan_pool else "full scan"
 
-        # Fewer, larger batches → fewer API calls
-        batches = self._group_by_episode_batch(singles, batch_size=25)
+        # Small batches so Haiku can reliably locate indices.
+        # batch_size here = episodes per batch group; the real per-prompt
+        # cap is enforced inside _pick_from_batch (chunk_size).
+        batches = self._group_by_episode_batch(singles, batch_size=10)
 
         print(f"  Haiku {pool_mode}: {len(singles)} segments across {len(batches)} batches...")
 
@@ -151,7 +168,20 @@ class LLMReranker:
                 print(f"  [{done}/{total_batches}] {name}: {len(results)} picks", flush=True)
 
         if not batch_winners:
-            return []
+            # Safety net: Stage 1 found nothing (query too off, or all batches
+            # returned 0). Don't return an empty gallery — sample some usable
+            # singles so the user always sees candidate memes.
+            print("  Stage 1 empty, falling back to sampled singles", flush=True)
+            import random
+            pool = self._scan_pool or self._singles or []
+            with_frames = [s for s in pool if s.frame_path]
+            sample_src = with_frames or pool
+            if not sample_src:
+                return []
+            k = min(top_k, len(sample_src))
+            chosen = random.sample(sample_src, k)
+            from schemas import SearchResult
+            return [SearchResult(segment=s, score=0.0) for s in chosen]
 
         print(f"  Stage 1 done: {len(batch_winners)} picks", flush=True)
 
@@ -179,20 +209,26 @@ class LLMReranker:
         return batches
 
     def _pick_from_batch(self, query: str, segments: list[Segment]) -> list[Segment]:
-        """Stage 1: LLM picks up to 3 best responses from a batch (text-only)."""
-        lines = []
-        for i, s in enumerate(segments, 1):
-            lines.append(f"{i}. {s.text_current}")
+        """Stage 1: LLM picks up to 3 best responses from a batch (text-only).
 
-        chunk_size = 3000
+        Splits the batch into small chunks (<= chunk_size lines) so Haiku can
+        locate indices reliably. Each chunk is renumbered 1..len(chunk) locally,
+        and the reply is parsed against the chunk, not the whole batch.
+        """
+        chunk_size = 80
         all_picks: list[Segment] = []
 
-        for start in range(0, len(lines), chunk_size):
-            chunk_lines = lines[start:start + chunk_size]
+        for start in range(0, len(segments), chunk_size):
             chunk_segments = segments[start:start + chunk_size]
-
-            text = "\n".join(chunk_lines)
-            user_msg = f"使用者說：「{query}」\n\n以下是甄嬛傳台詞：\n{text}\n\n選最適合當幽默回應的（最多3個）："
+            # Renumber 1..N within this chunk (indices map directly to chunk_segments)
+            text = "\n".join(
+                f"{i}. {s.text_current}" for i, s in enumerate(chunk_segments, 1)
+            )
+            user_msg = (
+                f"使用者說：「{query}」\n\n"
+                f"以下是甄嬛傳台詞：\n{text}\n\n"
+                f"選最適合當幽默回應的（最多3個），只回編號："
+            )
 
             try:
                 response = self.client.messages.create(
@@ -203,18 +239,17 @@ class LLMReranker:
                     temperature=0.5,
                 )
                 raw = response.content[0].text.strip()
-                if raw == "0":
-                    continue
-                indices = [int(x.strip()) - 1 for x in raw.split(",")]
-                for idx in indices:
-                    if 0 <= idx < len(chunk_segments):
-                        all_picks.append(chunk_segments[idx])
+                for idx in _parse_indices(raw, len(chunk_segments)):
+                    all_picks.append(chunk_segments[idx])
             except anthropic.BadRequestError as e:
                 if "credit balance" in str(e):
-                    raise RuntimeError("Anthropic API 餘額不足，請至 https://console.anthropic.com/settings/billing 加值") from e
-                print(f"    Batch error: {e}")
+                    raise RuntimeError(
+                        "Anthropic API 餘額不足，請至 "
+                        "https://console.anthropic.com/settings/billing 加值"
+                    ) from e
+                print(f"    Batch error: {e}", flush=True)
             except Exception as e:
-                print(f"    Batch error: {e}")
+                print(f"    Batch error: {e}", flush=True)
 
         return all_picks
 
@@ -279,8 +314,9 @@ class LLMReranker:
             )
 
             raw = response.content[0].text.strip()
-            indices = [int(x.strip()) - 1 for x in raw.split(",")]
-            indices = [i for i in indices if 0 <= i < len(valid_winners)]
+            indices = _parse_indices(raw, len(valid_winners))
+            if not indices:
+                return valid_winners[:top_k]
             return [valid_winners[i] for i in indices[:top_k]]
         except Exception as e:
             print(f"  Vision final select error: {e}")
@@ -310,9 +346,7 @@ class LLMReranker:
         )
 
         raw = response.content[0].text.strip()
-        try:
-            indices = [int(x.strip()) - 1 for x in raw.split(",")]
-            indices = [i for i in indices if 0 <= i < len(winners)]
-            return [winners[i] for i in indices[:top_k]]
-        except (ValueError, IndexError):
+        indices = _parse_indices(raw, len(winners))
+        if not indices:
             return winners[:top_k]
+        return [winners[i] for i in indices[:top_k]]

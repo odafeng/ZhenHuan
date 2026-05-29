@@ -80,14 +80,12 @@ def _filter_chunk(client, chunk_lines, chunk_segments, chunk_id, total_chunks):
             print(f"  [{chunk_id}/{total_chunks}] 0 picks")
             return []
 
+        # Robust: extract all integers (handles full-width commas, spaces, stray text)
         indices = []
-        for x in raw.split(","):
-            try:
-                idx = int(x.strip()) - 1
-                if 0 <= idx < len(chunk_segments):
-                    indices.append(idx)
-            except ValueError:
-                continue
+        for tok in re.findall(r"\d+", raw):
+            idx = int(tok) - 1
+            if 0 <= idx < len(chunk_segments) and idx not in indices:
+                indices.append(idx)
 
         picks = [chunk_segments[i] for i in indices]
         print(f"  [{chunk_id}/{total_chunks}] {len(picks)} picks")
@@ -112,8 +110,9 @@ def main():
     singles = [s for s in all_segs if s.window_tier == "single" and not _is_garbage(s)]
     print(f"Total segments to scan: {len(singles)}")
 
-    # Build chunks
-    chunk_size = 3000
+    # Build chunks. Keep chunks small so Haiku can scan every line reliably;
+    # oversized chunks (e.g. 3000 lines) cause it to miss or hallucinate indices.
+    chunk_size = 150
     lines = [f"{i+1}. {s.text_current}" for i, s in enumerate(singles)]
 
     chunks = []
