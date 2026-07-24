@@ -15,7 +15,7 @@
 |---|---|
 | 程式碼 | 完整，25 個測試全綠 |
 | `segments.pkl` | 182,616 筆，本地與 HF Hub 各有一份（39.9 MB） |
-| frames | 本地 60,874 張／7.1 GB；HF Hub 有壓縮版 `frames_small.tar.gz`（1.47 GB） |
+| frames | 本地 60,874 張／6.94 GB（平均 120 KB/張）；HF Hub 另有壓縮版 `frames_small.tar.gz`（1.47 GB） |
 | HF Hub dataset | `odafeng/zhenhuan-data` 仍在線、public、未停用 |
 | `humor_pool.pkl` | **不存在**（本地與 HF Hub 都沒有） |
 | Render 服務 | 已掛 |
@@ -77,7 +77,7 @@ Container (Python 3.11)
 |---|---|
 | `worker/index.ts` | 路由。`/frames/*` 走 R2 binding + Cache API；其餘用 `container.fetch()` 轉發到 Container |
 | `wrangler.jsonc` | Container 定義、R2 binding、instance type |
-| `scripts/upload_frames_to_r2.py` | 一次性上傳 frames 到 R2 |
+| `scripts/verify_r2_upload.py` | 上傳後驗證：比對 R2 物件數與本地檔案數、抽樣確認可讀取 |
 | `interfaces/web_cf.py` | Cloudflare 版 Gradio entry，由 `web_render.py` 改寫 |
 
 ### 修改
@@ -136,17 +136,29 @@ Containers 的磁碟是 ephemeral，容器睡著後重置。放 R2 等於每次�
 
 ### D2：frames 放 R2，不進 image
 
-1.47 GB 打進 image 會拖垮部署與冷啟動。且 Gallery 每次只載入當次結果的 5 張，實際流量很小。R2 egress 不收費。
+6.94 GB 打進 image 會拖垮部署與冷啟動，也逼近 20 GB 的 image 上限。且 Gallery 每次只載入當次結果的 5 張，實際流量很小。R2 egress 不收費。
 
-### D3：用壓縮版 frames（1.47 GB），不用本地原圖（7.1 GB）
+### D3：用本地原圖（6.94 GB），不用壓縮版
 
-壓縮版已在線上驗證可用、載入快、只佔 R2 免費額度 10 GB 的 15%（原圖會佔 71%，沒有餘裕）。
+畫質是產品需求 —— 這是給人看的反應圖，壓縮版平均每張只有 24 KB，糊掉會直接損害成品。原圖平均 120 KB。
 
-若之後覺得畫質不足，改上傳原圖即可，不影響其他設計。
+代價是佔掉 R2 免費額度 10 GB 的 69.4%，只剩約 3 GB 餘裕。可接受的理由：
+
+- 超額後的費率是 $0.015／GB-月，即使長到 12 GB 也只多 $0.03／月
+- egress 不收費，所以圖片變大不影響流量成本
+- 每次查詢載入 5 張約 600 KB，走 Cloudflare CDN 快取後可接受
+
+若日後載入速度成為問題，可在 Worker 那層加 Image Transformations 做動態縮放，保留原圖不動。現在不做（YAGNI）。
 
 ### D4：圖片走 Worker + R2 binding，不用 r2.dev 也不用 custom domain
 
 `r2.dev` 官方明言有 rate limit 且不適合 production。custom domain 需要自有網域。Worker 本來就要負責路由，順便供圖不增加元件，且 bucket 可保持 private。
+
+### D4b：用 rclone 上傳，不自寫 Python 上傳腳本
+
+60,874 個檔案、6.94 GB 的搬遷需要並行、續傳與一致性檢查。rclone 原生支援 R2（S3 相容），這些都是現成的；自寫腳本等於重造一個比較差的輪子。
+
+只保留一支驗證腳本比對上傳結果。
 
 ### D5：遷移前先建 humor pool
 
@@ -178,6 +190,8 @@ Containers 的磁碟是 ephemeral，容器睡著後重置。放 R2 等於每次�
 | Gradio SSE 在 Worker 後失效 | 搜尋結果不回來 | 用 `fetch()`；`wrangler dev` 先驗證 |
 | 精簡 requirements 踩到隱性 import | 執行期爆炸 | `docker build` 後本地起 container 完成一次查詢（pytest 驗證不到，見測試策略 3） |
 | 上傳 60,874 個小檔 | 6 萬次 Class A 操作 | 在免費額度 100 萬次／月內 |
+| R2 用掉 69.4% 免費額度 | 僅剩約 3 GB 餘裕 | 接受。超額費率僅 $0.015／GB-月，且此 bucket 不作他用 |
+| 原圖 120 KB／張，行動網路載入較慢 | 手機體驗變差 | 先觀察。真的有問題再在 Worker 加 Image Transformations，不改動已上傳的原圖 |
 | humor pool 品質不如預期 | 選圖變差 | 建完先本地查幾筆比對再部署 |
 
 ## 成本
@@ -185,7 +199,7 @@ Containers 的磁碟是 ephemeral，容器睡著後重置。放 R2 等於每次�
 | 項目 | 費用 |
 |---|---|
 | Workers Paid | $5／月（已有） |
-| R2 儲存 1.47 GB | $0（10 GB 免費額度內） |
+| R2 儲存 6.94 GB | $0（10 GB 免費額度內，用掉 69.4%） |
 | R2 egress | $0（不收費） |
 | R2 Class A（上傳 6 萬次） | $0（100 萬次／月免費額度內） |
 | Container 運算 | 低用量下在含量內（25 GiB-hours 記憶體、375 vCPU-分鐘） |

@@ -21,7 +21,7 @@ Render 免費方案的 2 GB 記憶體上限，是先前多個設計妥協的來�
 重新選平台時，實際需求是：
 
 1. 能跑既有的 Python + Gradio container
-2. 能存放並對外供應 60,874 張圖片（壓縮版共 1.47 GB）
+2. 能存放並對外供應 60,874 張原始畫質圖片（共 6.94 GB）
 3. 冷啟動不要像 Render 免費方案那樣要等約 50 秒
 4. 成本可控
 
@@ -62,4 +62,5 @@ Render 免費方案的 2 GB 記憶體上限，是先前多個設計妥協的來�
 - **磁碟語意改變**：Containers 的磁碟是 ephemeral，容器睡著即重置。因此索引檔必須打包進 image，不能像 Render 那樣依賴 persistent disk 只下載一次
 - **多一層轉發**：Worker → Container 的架構比 Render 直連多一跳，且 Gradio 的 SSE 必須用 `container.fetch()` 而非 `containerFetch()`，用錯會靜默失敗
 - **綁定 Cloudflare**：`wrangler.jsonc` 與 R2 binding 是平台專屬設定，日後要再搬家需要重做這一層。Dockerfile 本身仍可攜
-- **R2 免費額度 10 GB 只夠放壓縮版**：若日後改用原圖（7.1 GB）會佔掉 71%，餘裕不多
+- **R2 免費額度用掉近七成**：選擇上傳原始畫質（6.94 GB）而非壓縮版（1.47 GB），因為畫質是產品需求 —— 這是給人看的反應圖，24 KB 的壓縮版會糊。代價是 10 GB 免費額度只剩約 3 GB 餘裕，此 bucket 不宜再作他用。超額費率為 $0.015／GB-月，影響有限
+- **行動網路載入較慢**：原圖平均 120 KB／張，每次查詢載入 5 張約 600 KB。已接受，必要時再於 Worker 層加 Image Transformations
