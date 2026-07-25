@@ -84,8 +84,10 @@ Container (Python 3.11)
 
 | 檔案 | 改動 |
 |---|---|
-| `Dockerfile` | entrypoint 改為 `interfaces.web_cf`；套用精簡後的 requirements |
+| `Dockerfile` | entrypoint 改為 `interfaces.web_cf`；套用精簡後的 requirements；`EXPOSE` 對齊容器 port |
 | `requirements.txt` | 從 10 個套件砍到 3 個：`gradio`、`anthropic`、`python-dotenv` |
+| `core/reranker.py` | 新增 `_read_frame_bytes()`，`_final_select_with_vision` 改用之（見 D6） |
+| `.dockerignore` | 改為納入 `data/cache/index/*.pkl`、排除其餘 `data/cache/`（見 D7） |
 
 ### 依賴清單的職責分離
 
@@ -108,11 +110,22 @@ Pillow 不需顯式列入 runtime — runtime 沒有任何模組直接 `import P
 
 ### `web_cf.py` 與 `web_render.py` 的差異
 
-1. 移除啟動時從 HF Hub 下載 frames 的整段邏輯（圖片已在 R2）
+1. 移除啟動時從 HF Hub 下載資料的整段邏輯（`segments.pkl` 與 `humor_pool.pkl` 已打包進 image、frames 已在 R2）
 2. 移除 `PERSIST_DIR` / tarfile 解壓邏輯
-3. `_resolve_frame()` 改為回傳相對路徑 `/frames/<檔名>`，不再回傳本機絕對路徑
+3. `_resolve_frame()` 改為回傳圖片的完整 URL `{PUBLIC_BASE_URL}/frames/<檔名>`（給 Gradio Gallery 當 `<img src>`），不再回傳本機絕對路徑
 4. 移除 `allowed_paths`（不再從本機檔案系統供圖）
 5. 保留 loading 畫面（Container 冷啟動仍需 2–3 秒）
+6. 背景初始化改為只載入已打包的 reranker，不下載任何東西
+7. 初始化執行緒的啟動移到 `if __name__ == "__main__"` 內，讓 `_resolve_frame` 等純函式可被測試 import 而不觸發載入
+
+### `PUBLIC_BASE_URL` 環境變數
+
+單一環境變數同時服務兩個用途，值為部署後的 Worker 公開網址（例如 `https://zhenhuan.<subdomain>.workers.dev`）：
+
+- **Gallery 供圖**：`_resolve_frame` 產生 `{PUBLIC_BASE_URL}/frames/<檔名>`，瀏覽器據此向 Worker 請求圖片
+- **Vision 讀圖**：reranker Stage 2 據此從 R2 抓候選圖（見 D6）
+
+未設定時（本機開發／測試）回退為本機路徑行為，因此既有 CLI 與測試不受影響。設定值在首次部署取得 workers.dev 網址後填入 Container 的 `envVars`。
 
 ## 資料流
 
@@ -162,13 +175,29 @@ Containers 的磁碟是 ephemeral，容器睡著後重置。放 R2 等於每次�
 
 ### D5：遷移前先建 humor pool
 
-不建的話上線後每次查詢 $0.51。一次性成本約 $1。
+不建的話上線後每次查詢 $0.51。一次性成本約 $0.55（`build_humor_pool.py` docstring 實測值）。產出約 3–5K segments 的 `humor_pool.pkl`。
+
+### D6：Stage 2 vision 於查詢時從 R2 抓候選圖，不把圖打進 image
+
+`reranker.py` 的 `_final_select_with_vision` 原本從本機磁碟讀圖 bytes 送給 Claude。圖搬到 R2 後容器本地無圖，若不處理會讓每個候選都落入「無截圖」的 text-only 分支，vision rerank 靜默失效（此 stage 是 `f6891e3` 為品質特意加回）。
+
+作法：`reranker.py` 新增 `_read_frame_bytes(frame_path)` 小工具 —
+
+- 若環境變數 `PUBLIC_BASE_URL` 有設：以 stdlib `urllib` 從 `{PUBLIC_BASE_URL}/frames/<檔名>` 抓 bytes（不加任何依賴）
+- 否則回退讀本機磁碟（保留 CLI／本機／測試行為）
+
+`_final_select_with_vision` 改用此工具取代 `Path(...).read_bytes()`。每次查詢僅抓約 20 張候選圖、走 Cloudflare CDN 快取，延遲可接受。這是對既有 reranker 的外科式小改，非重寫。
+
+### D7：`.dockerignore` 精準納入索引、排除 frames
+
+現有 `.dockerignore` 整個排除 `data/cache/`，但遷移需要把 `data/cache/index/segments.pkl` 與 `humor_pool.pkl` 打包進 image。改為排除 `data/cache/` 下除了 `index/*.pkl` 以外的內容，並維持排除 `data/processed/`（6.94 GB frames）、`data/videos/`、`data/subtitles/`。
 
 ## 錯誤處理
 
 | 情境 | 處理 |
 |---|---|
-| Gradio 的 SSE／WebSocket | 一律用 `container.fetch()`，**不可**用 `containerFetch()`（後者不支援 upgrade，會靜默失敗） |
+| Gradio 的 SSE／WebSocket | Worker 一律用 `container.fetch()`，**不可**用 `containerFetch()`（後者不支援 upgrade，會靜默失敗） |
+| Stage 2 從 R2 抓圖失敗 | `_read_frame_bytes` 回傳 None，該候選降級為 text-only（既有 fallback 已涵蓋），不中斷查詢 |
 | Container 冷啟動 | 用 `startAndWaitForPorts()`（20 秒上限），前端維持現有 loading 畫面 |
 | Anthropic API 失敗 | 沿用現有處理（`99f2a3a` 已把 API credit 錯誤浮到 UI） |
 | R2 物件不存在 | Worker 回 404 並記 log；Gallery 略過該張（`_resolve_frame` 既有的 falsy 過濾已涵蓋） |
