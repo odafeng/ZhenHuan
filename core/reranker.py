@@ -1,7 +1,9 @@
 """LLM-based selector: directly pick funny responses from all segments, no embedding needed."""
 
 import base64
+import os
 import re
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -65,6 +67,28 @@ def _parse_indices(raw: str, n: int) -> list[int]:
         if 0 <= idx < n and idx not in out:
             out.append(idx)
     return out
+
+
+def _read_frame_bytes(frame_path: str) -> bytes | None:
+    """Read a frame's raw bytes for vision rerank.
+
+    When PUBLIC_BASE_URL is set (Cloudflare container), frames live in R2
+    and are fetched over HTTP via the Worker. Otherwise read from local
+    disk (CLI, local dev, tests). Returns None on any failure so the
+    caller can degrade that candidate to text-only.
+    """
+    base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    if base:
+        name = Path(frame_path).name
+        try:
+            with urllib.request.urlopen(f"{base}/frames/{name}", timeout=10) as resp:
+                return resp.read()
+        except Exception:
+            return None
+    p = Path(frame_path)
+    if p.exists():
+        return p.read_bytes()
+    return None
 
 
 def _is_garbage(seg: Segment) -> bool:
