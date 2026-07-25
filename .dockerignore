@@ -1,8 +1,15 @@
 data/videos/
 data/processed/
-data/cache/
+data/subtitles/
+data/cache/*
+!data/cache/index
+data/cache/index/*
+!data/cache/index/segments.pkl
+!data/cache/index/humor_pool.pkl
 .git/
 __pycache__/
 *.pyc
 .venv/
 .env
+docs/
+tests/
