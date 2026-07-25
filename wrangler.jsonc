@@ -1,0 +1,24 @@
+{
+  "name": "zhenhuan",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-07-06",
+  "containers": [
+    {
+      "class_name": "GradioContainer",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 3
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "GRADIO_CONTAINER", "class_name": "GradioContainer" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GradioContainer"] }
+  ],
+  "r2_buckets": [
+    { "binding": "FRAMES", "bucket_name": "zhenhuan" }
+  ]
+}
