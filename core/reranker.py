@@ -288,29 +288,26 @@ class LLMReranker:
 
         valid_winners = []
         for i, s in enumerate(winners, 1):
-            frame_path = s.frame_path
-            if frame_path and Path(frame_path).exists():
-                try:
-                    img_data = base64.b64encode(Path(frame_path).read_bytes()).decode()
-                    content_blocks.append({
-                        "type": "text",
-                        "text": f"\n--- 候選 {len(valid_winners) + 1} ---",
-                    })
-                    content_blocks.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": img_data,
-                        },
-                    })
-                    content_blocks.append({
-                        "type": "text",
-                        "text": f"台詞：「{s.text_current}」（{s.episode_id}）",
-                    })
-                    valid_winners.append(s)
-                except Exception:
-                    continue
+            img_bytes = _read_frame_bytes(s.frame_path) if s.frame_path else None
+            if img_bytes:
+                img_data = base64.b64encode(img_bytes).decode()
+                content_blocks.append({
+                    "type": "text",
+                    "text": f"\n--- 候選 {len(valid_winners) + 1} ---",
+                })
+                content_blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": img_data,
+                    },
+                })
+                content_blocks.append({
+                    "type": "text",
+                    "text": f"台詞：「{s.text_current}」（{s.episode_id}）",
+                })
+                valid_winners.append(s)
             else:
                 # No image, include as text-only candidate
                 content_blocks.append({
