@@ -11,7 +11,6 @@ import anthropic
 
 from schemas import Segment
 
-
 PICK_PROMPT = """你是「甄嬛傳迷因產生器」。
 
 使用者輸入一句現代口語，你要從甄嬛傳的台詞中，選出最適合拿來當「幽默回應」的台詞。
@@ -213,7 +212,7 @@ class LLMReranker:
         if len(batch_winners) <= top_k:
             final = batch_winners
         else:
-            print(f"  Stage 2: Haiku vision rerank...", flush=True)
+            print("  Stage 2: Haiku vision rerank...", flush=True)
             final = self._final_select_with_vision(query, batch_winners, top_k)
 
         from schemas import SearchResult

@@ -1,4 +1,3 @@
-import pytest
 from interfaces.web_cf import _resolve_frame
 
 

@@ -1,4 +1,3 @@
-import pytest
 from core.reranker import _read_frame_bytes
 
 

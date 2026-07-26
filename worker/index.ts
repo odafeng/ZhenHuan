@@ -83,11 +83,16 @@ export default {
       return response;
     }
 
-    // Rate-limit the expensive search REST endpoint per client IP. Each
-    // search runs the reranker (paid Haiku calls), so cap scripted abuse
-    // here — before it reaches the container or Anthropic. Only the /call/
-    // REST path is limited; the browser's queue/SSE/Timer traffic (readiness
-    // polls every 2s) is left untouched so the UI keeps working.
+    // Per-IP cap on the search REST endpoint (POST /gradio_api/call/*), which
+    // runs the paid reranker. This stops casual curl-the-REST-API abuse before
+    // it reaches the container or Anthropic.
+    //
+    // KNOWN GAP: the browser AND gradio_client trigger search via
+    // /gradio_api/queue/join, NOT /call/, so a client using the queue protocol
+    // bypasses this cap. We do not limit /queue/join because the gr.Timer
+    // readiness poll (~30/min) also flows through it, and telling them apart
+    // needs body parsing. The hard cost ceiling is the Anthropic monthly spend
+    // cap; move this limit inside the container's search() for full coverage.
     if (request.method === "POST" && url.pathname.startsWith("/gradio_api/call/")) {
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
       const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(ip));

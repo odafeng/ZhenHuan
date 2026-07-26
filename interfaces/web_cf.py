@@ -11,6 +11,7 @@ from pathlib import Path
 
 import gradio as gr
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # --- Paths (baked into image) ---
