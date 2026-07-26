@@ -2,6 +2,7 @@ import { Container } from "@cloudflare/containers";
 
 interface Env {
   GRADIO_CONTAINER: DurableObjectNamespace<GradioContainer>;
+  RATE_LIMITER: DurableObjectNamespace<RateLimiter>;
   FRAMES: R2Bucket;
   ANTHROPIC_API_KEY: string;
 }
@@ -9,6 +10,10 @@ interface Env {
 // Public URL of this Worker — used by the container to build absolute R2
 // image URLs (gallery) and to fetch candidate frames in Stage 2 vision.
 const PUBLIC_BASE_URL = "https://zhenhuan.aidigest.workers.dev";
+
+// Per-IP search cap: N searches per WINDOW seconds.
+const SEARCH_LIMIT = 8;
+const SEARCH_WINDOW_MS = 60_000;
 
 export class GradioContainer extends Container {
   defaultPort = 8080;
@@ -24,6 +29,30 @@ export class GradioContainer extends Container {
       PUBLIC_BASE_URL,
       ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
     };
+  }
+}
+
+// Fixed-window rate limiter, one instance per IP. Durable Objects give a
+// single-threaded, consistent counter — unlike the Workers rate-limit
+// binding, which did not enforce reliably here.
+export class RateLimiter {
+  constructor(private state: DurableObjectState) {}
+
+  async fetch(): Promise<Response> {
+    const now = Date.now();
+    const rec =
+      (await this.state.storage.get<{ count: number; reset: number }>("w")) ??
+      { count: 0, reset: now + SEARCH_WINDOW_MS };
+    if (now >= rec.reset) {
+      rec.count = 0;
+      rec.reset = now + SEARCH_WINDOW_MS;
+    }
+    rec.count++;
+    await this.state.storage.put("w", rec);
+    return Response.json({
+      allowed: rec.count <= SEARCH_LIMIT,
+      retryAfter: Math.max(1, Math.ceil((rec.reset - now) / 1000)),
+    });
   }
 }
 
@@ -52,6 +81,26 @@ export default {
       const response = new Response(object.body, { headers });
       ctx.waitUntil(cache.put(request, response.clone()));
       return response;
+    }
+
+    // Rate-limit the expensive search REST endpoint per client IP. Each
+    // search runs the reranker (paid Haiku calls), so cap scripted abuse
+    // here — before it reaches the container or Anthropic. Only the /call/
+    // REST path is limited; the browser's queue/SSE/Timer traffic (readiness
+    // polls every 2s) is left untouched so the UI keeps working.
+    if (request.method === "POST" && url.pathname.startsWith("/gradio_api/call/")) {
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(ip));
+      const { allowed, retryAfter } = (await stub.fetch("https://rl/").then((r) => r.json())) as {
+        allowed: boolean;
+        retryAfter: number;
+      };
+      if (!allowed) {
+        return new Response("Rate limit exceeded — please wait a moment before searching again.", {
+          status: 429,
+          headers: { "Retry-After": String(retryAfter) },
+        });
+      }
     }
 
     // everything else -> the Gradio container (single shared instance)

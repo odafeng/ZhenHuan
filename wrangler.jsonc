@@ -12,11 +12,13 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "GRADIO_CONTAINER", "class_name": "GradioContainer" }
+      { "name": "GRADIO_CONTAINER", "class_name": "GradioContainer" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["GradioContainer"] }
+    { "tag": "v1", "new_sqlite_classes": ["GradioContainer"] },
+    { "tag": "v2", "new_sqlite_classes": ["RateLimiter"] }
   ],
   "r2_buckets": [
     { "binding": "FRAMES", "bucket_name": "zhenhuan" }
