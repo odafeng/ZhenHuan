@@ -7,7 +7,10 @@
       "class_name": "GradioContainer",
       "image": "./Dockerfile",
       "instance_type": "basic",
-      "max_instances": 3
+      "max_instances": 3,
+      "envVars": {
+        "PUBLIC_BASE_URL": "https://zhenhuan.aidigest.workers.dev"
+      }
     }
   ],
   "durable_objects": {
