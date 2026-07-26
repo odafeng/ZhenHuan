@@ -47,7 +47,21 @@
 - [x] Offline humor pool 預過濾（scripts/build_humor_pool.py）— runtime 成本降 10x
 - [x] 修 reranker 0-picks bug（batch 編號錯位 + 全形逗號解析）
 
-## Phase 8: 待辦
-- [ ] 確認 Render 服務是否還在線（免費方案閒置會被回收）
-- [ ] 本地 data/cache/index 只有 segments.pkl，缺 embeddings.npy / faiss index
+## Phase 8: 已遷移至 Cloudflare（2026-07-26）
+- [x] 從 Render 遷移到 Worker + Containers + R2（見 docs/adr/0001）
+- [x] humor_pool.pkl 建立（8370 candidates）並打包進 image — runtime 走 fast mode
+- [x] frames 上傳 R2 bucket `zhenhuan`（60,874 張 / 6.94GB）+ Worker 代理供圖 + 邊緣快取
+- [x] container requirements 精簡至 3 個套件（gradio / anthropic / python-dotenv）
+- [x] 部署上線：https://zhenhuan.aidigest.workers.dev（standard-1 instance, Workers Paid）
+- [x] 線上驗證：search SSE 端到端、R2 圖片絕對 URL、/frames 快取
+
+### 部署備忘（維護時注意）
+- 容器 env 變數（PUBLIC_BASE_URL / ANTHROPIC_API_KEY）設在 worker/index.ts 的 Container class，**不是** wrangler.jsonc 的 envVars（後者會被忽略）。
+- ANTHROPIC_API_KEY 是 Worker secret（`wrangler secret put ANTHROPIC_API_KEY`），未進 git。
+- `wrangler deploy` 會用本機 Docker 重 build image 再 push；Docker Desktop 若磁碟壓力大，push 大 layer 會斷（`docker image prune -af` 可解）。
+- 記憶體不足時 instance_type 已從 basic 升 standard-1。
+
+## Phase 9: 遺留待辦（不影響上線）
+- [ ] 本地 data/cache/index 只有 segments.pkl，缺 embeddings.npy / faiss index（LLM-only 模式不需要）
 - [ ] data/videos 原始影片已刪（frames 60,874 張還在，不影響檢索）
+- [ ] 憑證輪替：R2 S3 key 與 cfat_ token 曾貼於對話，建議上線穩定後 rotate
