@@ -1,14 +1,30 @@
 import { Container } from "@cloudflare/containers";
 
-export class GradioContainer extends Container {
-  defaultPort = 8080;
-  sleepAfter = "30m";
-  enableInternet = true; // needed for Anthropic API + R2 frame fetch in Stage 2
-}
-
 interface Env {
   GRADIO_CONTAINER: DurableObjectNamespace<GradioContainer>;
   FRAMES: R2Bucket;
+  ANTHROPIC_API_KEY: string;
+}
+
+// Public URL of this Worker — used by the container to build absolute R2
+// image URLs (gallery) and to fetch candidate frames in Stage 2 vision.
+const PUBLIC_BASE_URL = "https://zhenhuan.aidigest.workers.dev";
+
+export class GradioContainer extends Container {
+  defaultPort = 8080;
+  sleepAfter = "30m";
+  enableInternet = true; // Anthropic API + R2 frame fetch in Stage 2
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // Container env vars must be set on the class (the wrangler.jsonc
+    // `envVars` field is not honored). ANTHROPIC_API_KEY comes from a
+    // Worker secret (`wrangler secret put`), never committed.
+    this.envVars = {
+      PUBLIC_BASE_URL,
+      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+    };
+  }
 }
 
 export default {
